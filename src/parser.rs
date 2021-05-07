@@ -5,16 +5,13 @@ use nom::bits::streaming::take as bit_take;
 use nom::bytes::streaming::take;
 use nom::combinator::map;
 use nom::error::Error;
-use nom::IResult;
+use nom::{IResult, Parser};
 use nom::number::Endianness;
 use nom::number::streaming::{u16, u32};
 use nom::sequence::tuple;
 
 use crate::parser::MqttParserError::MalformedPacket;
-use crate::protocol::{
-    Connect, Disconnect, DisconnectReason, Property, Publish, QoS, Subscribe, TopicFilter, Will,
-};
-use crate::protocol::Property::*;
+use crate::protocol::{Connect, Disconnect, DisconnectReason, Properties, Publish, QoS, Subscribe, TopicFilter, Will, UserProperty};
 
 use super::protocol::MqttPacket;
 
@@ -113,33 +110,103 @@ fn parse_binary_data(input: &[u8]) -> MqttParserResult<&[u8], &[u8]> {
     take(length)(rest)
 }
 
-fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Vec<Property>> {
+pub fn map_to_property<I, O, F>(
+    i: Option<O>,
+    mut parser: F
+) -> impl FnMut(I) -> MqttParserResult<I, ()>
+    where F: Parser<I, O, MqttParserError<I>>,
+          O: Copy
+{
+    move |input: I| match parser.parse(input) {
+        Ok((rest, res)) => i
+                .xor(Some(res))
+                .ok_or(nom::Err::Failure(MalformedPacket))
+                .map(|_| (rest, ())),
+        rest => rest.map(|(r, _)| (r, ())),
+    }
+}
+
+fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
     let (mut input, mut properties_length) = parse_variable_u32(input)?;
 
-    let mut properties = vec![];
+    let mut props = Properties::new();
+
+    // let mut properties = vec![];
     while properties_length > 0 {
         let (rest_next, property_identifier) = parse_variable_u32(input)?;
-        let (rest_next, property) = match property_identifier {
-            17u32 => map(u32(Endianness::Big), SessionExpiryInterval)(rest_next),
-            21u32 => map(parse_string, AuthenticationMethod)(rest_next),
-            22u32 => map(parse_binary_data, |b| AuthenticationData(b.to_vec()))(rest_next),
-            23u32 => map(take(1usize), |b: &[u8]| RequestProblemInformation(b[0]))(rest_next),
-            25u32 => map(take(1usize), |b: &[u8]| RequestResponseInformation(b[0]))(rest_next),
-            33u32 => map(u16(Endianness::Big), ReceiveMaximum)(rest_next),
-            34u32 => map(u16(Endianness::Big), TopicAliasMaximum)(rest_next),
-            38u32 => map(parse_string_pair, |(key, value)| UserProperty {
-                key,
-                value,
-            })(rest_next),
-            39u32 => map(u32(Endianness::Big), MaximumPacketSize)(rest_next),
-            _ => Err(nom::Err::Failure(MalformedPacket)),
+        let (rest_next, _) = match property_identifier {
+            1u32 => map_to_property(props.payload_format_indicator, map(take(1usize), |b: &[u8]| b[0]))(rest_next),
+            2u32 => map_to_property(props.message_expiry_interval, u32(Endianness::Big))(rest_next),
+            3u32 => {
+                let (rest, s) = parse_string(rest_next)?;
+                if let Some(_) = props.content_type {
+                    Err(nom::Err::Failure(MalformedPacket))
+                } else {
+                    props.content_type = Some(s);
+                    Ok((rest, ()))
+                }
+            },
+            8u32 => {
+                let (rest, s) = parse_string(rest_next)?;
+                if let Some(_) = props.response_topic {
+                    Err(nom::Err::Failure(MalformedPacket))
+                } else {
+                    props.response_topic = Some(s);
+                    Ok((rest, ()))
+                }
+            },
+            9u32 => {
+                let (rest, s) = parse_binary_data(rest_next)?;
+                if let Some(_) = props.correlation_data {
+                    Err(nom::Err::Failure(MalformedPacket))
+                } else {
+                    props.correlation_data = Some(s.to_vec());
+                    Ok((rest, ()))
+                }
+            },
+            17u32 => map_to_property(props.session_expiry_interval, u32(Endianness::Big))(rest_next),
+            21u32 => {
+                let (rest, s) = parse_string(rest_next)?;
+                if let Some(_) = props.authentication_method {
+                    Err(nom::Err::Failure(MalformedPacket))
+                } else {
+                    props.authentication_method = Some(s);
+                    Ok((rest, ()))
+                }
+            },
+            22u32 => {
+                let (rest, s) = parse_binary_data(rest_next)?;
+                if let Some(_) = props.authentication_data {
+                    Err(nom::Err::Failure(MalformedPacket))
+                } else {
+                    props.authentication_data = Some(s.to_vec());
+                    Ok((rest, ()))
+                }
+            },
+            23u32 => map_to_property(props.request_problem_information, map(take(1usize), |b: &[u8]| b[0]))(rest_next),
+            24u32 => map_to_property(props.will_delay_interval, u32(Endianness::Big))(rest_next),
+            25u32 => map_to_property(props.request_response_information, map(take(1usize), |b: &[u8]| b[0]))(rest_next),
+            33u32 => map_to_property(props.receive_maximum, u16(Endianness::Big))(rest_next),
+            34u32 => map_to_property(props.topic_alias_maximum, u16(Endianness::Big))(rest_next),
+            38u32 => {
+                let (rest, s) = parse_string_pair(rest_next)?;
+                props
+                    .user_property
+                    .get_or_insert(vec![])
+                    .push(UserProperty { key: s.0, value: s.1 });
+                Ok((rest, ()))
+            },
+            39u32 => map_to_property(props.maximum_packet_size, u32(Endianness::Big))(rest_next),
+            _ => {
+                println!("her????");
+                Err(nom::Err::Failure(MalformedPacket))
+            },
         }?;
-        properties.push(property);
         properties_length -= (input.len() - rest_next.len()) as u32;
         input = rest_next;
     }
 
-    Ok((input, properties))
+    Ok((input, props))
 }
 
 fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
@@ -181,14 +248,21 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
         let (rest, will_properties) = parse_properties(input)?;
         let (rest, will_topic) = parse_string(rest)?;
         let (rest, will_payload) = parse_binary_data(rest)?;
+
         (
             rest,
             Some(Will {
                 retain: will_retain != 0u8,
                 qos: will_qos,
                 topic: will_topic,
-                properties: will_properties,
                 payload: will_payload.to_vec(),
+                delay_interval: will_properties.will_delay_interval,
+                payload_format_indicator: will_properties.payload_format_indicator,
+                message_expiry_interval: will_properties.message_expiry_interval,
+                content_type: will_properties.content_type,
+                response_topic: will_properties.response_topic,
+                correlation_data: will_properties.correlation_data,
+                user_properties: will_properties.user_property,
             }),
         )
     } else {
@@ -450,7 +524,7 @@ mod tests {
                 will: None,
                 clean_start: true,
                 keep_alive: 10u16,
-                properties: vec![]
+                properties: Default::default()
             })
         ),
 

@@ -51,7 +51,7 @@ async fn process(
                     .send(MqttPacket::ConnAck(ConnAck {
                         session_present: false,
                         connect_reason: ConnectReason::Success,
-                        properties: vec![],
+                        properties: Default::default(),
                     }))
                     .await?;
             }
@@ -71,7 +71,7 @@ async fn process(
                 framed
                     .send(MqttPacket::SubAck(SubAck {
                         packet_identifier: subscribe.packet_identifier,
-                        properties: vec![],
+                        properties: Default::default(),
                         reasons: vec![SubscribeReason::GrantedQoS0],
                     }))
                     .await?;
