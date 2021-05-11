@@ -1,9 +1,9 @@
 use bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
-use super::protocol::MqttPacket;
-use crate::parser::parse_mqtt;
-use crate::protocol::to_bytes;
+use crate::parse::parse_mqtt;
+use crate::serialize::to_bytes;
+use crate::types::MqttPacket;
 use std::fmt::{Display, Formatter};
 use std::io::Error;
 
@@ -58,13 +58,5 @@ impl Decoder for MqttPacketDecoder {
             Err(nom::Err::Failure(_)) => Err(MqttPacketDecoderError {}),
             _ => Err(MqttPacketDecoderError {}),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
     }
 }

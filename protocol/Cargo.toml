@@ -1,0 +1,15 @@
+[package]
+name = "mqtt-protocol"
+version = "0.1.0"
+authors = ["Håvar Nøvik <havar.novik@gmail.com>"]
+edition = "2018"
+
+[dependencies.bytes]
+version = "1.0.1"
+
+[dependencies.nom]
+version = "6.1.2"
+
+[dependencies.tokio-util]
+version = "0.6.6"
+features = ["codec"]

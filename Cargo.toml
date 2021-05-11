@@ -1,25 +1,6 @@
-[package]
-name = "mqtt"
-version = "0.1.0"
-authors = ["Håvar Nøvik <havar.novik@sats.no>"]
-edition = "2018"
+[workspace]
 
-[dependencies.bytes]
-version = "1.0.1"
-
-[dependencies.tokio-stream]
-version = "0.1.5"
-
-[dependencies.tokio]
-version = "1.5.0"
-features = ["full"]
-
-[dependencies.tokio-util]
-version = "0.6.6"
-features = ["codec"]
-
-[dependencies.nom]
-version = "6.1.2"
-
-[dependencies.futures]
-version = "0.3.14"
+members = [
+    "protocol",
+    "server"
+]

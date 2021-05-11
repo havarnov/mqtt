@@ -1,7 +1,3 @@
-mod decoder;
-mod parser;
-mod protocol;
-
 use futures::SinkExt;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -11,8 +7,8 @@ use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
-use crate::protocol::{ConnAck, ConnectReason, MqttPacket, SubAck, SubscribeReason};
-use decoder::MqttPacketDecoder;
+use mqtt_protocol::framed::MqttPacketDecoder;
+use mqtt_protocol::types::{ConnAck, ConnectReason, MqttPacket, SubAck, SubscribeReason};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {

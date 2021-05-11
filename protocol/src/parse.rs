@@ -3,20 +3,18 @@ use std::str;
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
 use nom::bytes::streaming::take;
-use nom::combinator::{map, map_parser, map_res};
-use nom::error::{Error, ErrorKind, FromExternalError};
+use nom::combinator::{map, map_parser};
+use nom::error::Error;
 use nom::number::streaming::{u16, u32};
 use nom::number::Endianness;
 use nom::sequence::tuple;
-use nom::{IResult, Parser};
+use nom::IResult;
 
-use crate::parser::MqttParserError::MalformedPacket;
-use crate::protocol::{
-    Connect, Disconnect, DisconnectReason, Properties, Publish, QoS, Subscribe, TopicFilter,
-    UserProperty, Will,
+use crate::types::{
+    Connect, Disconnect, DisconnectReason, MqttPacket, Properties, Publish, QoS, Subscribe,
+    TopicFilter, UserProperty, Will,
 };
-
-use super::protocol::MqttPacket;
+use MqttParserError::*;
 
 #[derive(Debug, PartialEq)]
 pub enum MqttParserError<I> {
@@ -424,9 +422,9 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::MqttParserError::MalformedPacket;
-    use crate::parser::{parse_header, parse_mqtt, parse_string};
-    use crate::protocol::{Connect, MqttPacket, Will};
+    use crate::parse::MqttParserError::MalformedPacket;
+    use crate::parse::{parse_header, parse_mqtt, parse_string};
+    use crate::types::{Connect, MqttPacket, Will};
 
     macro_rules! variable_uint_tests {
         ($($name:ident: $value:expr,)*) => {
