@@ -35,11 +35,11 @@ pub struct Properties {
     // 22
     pub authentication_data: Option<Vec<u8>>,
     // 23
-    pub request_problem_information: Option<u8>,
+    pub request_problem_information: Option<bool>,
     // 24
     pub will_delay_interval: Option<u32>,
     // 25
-    pub request_response_information: Option<u8>,
+    pub request_response_information: Option<bool>,
     // 26
     pub response_information: Option<String>,
     // 28
@@ -93,7 +93,7 @@ pub struct Will {
     pub content_type: Option<String>,
     pub response_topic: Option<String>,
     pub correlation_data: Option<Vec<u8>>,
-    pub user_properties: Option<Vec<UserProperty>>
+    pub user_properties: Option<Vec<UserProperty>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -106,7 +106,13 @@ pub struct Connect {
     pub will: Option<Will>,
     pub clean_start: bool,
     pub keep_alive: u16,
-    pub properties: Properties,
+    pub session_expiry_interval: Option<u32>,
+    pub receive_maximum: Option<u16>,
+    pub maximum_packet_size: Option<u32>,
+    pub topic_alias_maximum: Option<u16>,
+    pub request_response_information: Option<bool>,
+    pub request_problem_information: Option<bool>,
+    pub user_properties: Option<Vec<UserProperty>>,
 }
 
 #[derive(Debug, PartialEq)]

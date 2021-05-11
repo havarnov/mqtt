@@ -3,15 +3,18 @@ use std::str;
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
 use nom::bytes::streaming::take;
-use nom::combinator::map;
-use nom::error::Error;
-use nom::{IResult, Parser};
-use nom::number::Endianness;
+use nom::combinator::{map, map_parser, map_res};
+use nom::error::{Error, ErrorKind, FromExternalError};
 use nom::number::streaming::{u16, u32};
+use nom::number::Endianness;
 use nom::sequence::tuple;
+use nom::{IResult, Parser};
 
 use crate::parser::MqttParserError::MalformedPacket;
-use crate::protocol::{Connect, Disconnect, DisconnectReason, Properties, Publish, QoS, Subscribe, TopicFilter, Will, UserProperty};
+use crate::protocol::{
+    Connect, Disconnect, DisconnectReason, Properties, Publish, QoS, Subscribe, TopicFilter,
+    UserProperty, Will,
+};
 
 use super::protocol::MqttPacket;
 
@@ -110,19 +113,20 @@ fn parse_binary_data(input: &[u8]) -> MqttParserResult<&[u8], &[u8]> {
     take(length)(rest)
 }
 
-pub fn map_to_property<I, O, F>(
-    i: Option<O>,
-    mut parser: F
-) -> impl FnMut(I) -> MqttParserResult<I, ()>
-    where F: Parser<I, O, MqttParserError<I>>,
-          O: Copy
-{
-    move |input: I| match parser.parse(input) {
-        Ok((rest, res)) => i
-                .xor(Some(res))
-                .ok_or(nom::Err::Failure(MalformedPacket))
-                .map(|_| (rest, ())),
-        rest => rest.map(|(r, _)| (r, ())),
+fn map_to_property<T, I>(option: &mut Option<T>, value: (I, T)) -> MqttParserResult<I, ()> {
+    if option.is_some() {
+        Err(nom::Err::Failure(MalformedPacket))
+    } else {
+        *option = Some(value.1);
+        Ok((value.0, ()))
+    }
+}
+
+pub fn parse_u8_as_bool(input: &[u8]) -> IResult<&[u8], bool, MqttParserError<&[u8]>> {
+    match input[0] {
+        0u8 => Ok((input, false)),
+        1u8 => Ok((input, true)),
+        _ => Err(nom::Err::Failure(MalformedPacket)),
     }
 }
 
@@ -135,72 +139,65 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
     while properties_length > 0 {
         let (rest_next, property_identifier) = parse_variable_u32(input)?;
         let (rest_next, _) = match property_identifier {
-            1u32 => map_to_property(props.payload_format_indicator, map(take(1usize), |b: &[u8]| b[0]))(rest_next),
-            2u32 => map_to_property(props.message_expiry_interval, u32(Endianness::Big))(rest_next),
-            3u32 => {
-                let (rest, s) = parse_string(rest_next)?;
-                if let Some(_) = props.content_type {
-                    Err(nom::Err::Failure(MalformedPacket))
-                } else {
-                    props.content_type = Some(s);
-                    Ok((rest, ()))
-                }
-            },
-            8u32 => {
-                let (rest, s) = parse_string(rest_next)?;
-                if let Some(_) = props.response_topic {
-                    Err(nom::Err::Failure(MalformedPacket))
-                } else {
-                    props.response_topic = Some(s);
-                    Ok((rest, ()))
-                }
-            },
-            9u32 => {
-                let (rest, s) = parse_binary_data(rest_next)?;
-                if let Some(_) = props.correlation_data {
-                    Err(nom::Err::Failure(MalformedPacket))
-                } else {
-                    props.correlation_data = Some(s.to_vec());
-                    Ok((rest, ()))
-                }
-            },
-            17u32 => map_to_property(props.session_expiry_interval, u32(Endianness::Big))(rest_next),
-            21u32 => {
-                let (rest, s) = parse_string(rest_next)?;
-                if let Some(_) = props.authentication_method {
-                    Err(nom::Err::Failure(MalformedPacket))
-                } else {
-                    props.authentication_method = Some(s);
-                    Ok((rest, ()))
-                }
-            },
-            22u32 => {
-                let (rest, s) = parse_binary_data(rest_next)?;
-                if let Some(_) = props.authentication_data {
-                    Err(nom::Err::Failure(MalformedPacket))
-                } else {
-                    props.authentication_data = Some(s.to_vec());
-                    Ok((rest, ()))
-                }
-            },
-            23u32 => map_to_property(props.request_problem_information, map(take(1usize), |b: &[u8]| b[0]))(rest_next),
-            24u32 => map_to_property(props.will_delay_interval, u32(Endianness::Big))(rest_next),
-            25u32 => map_to_property(props.request_response_information, map(take(1usize), |b: &[u8]| b[0]))(rest_next),
-            33u32 => map_to_property(props.receive_maximum, u16(Endianness::Big))(rest_next),
-            34u32 => map_to_property(props.topic_alias_maximum, u16(Endianness::Big))(rest_next),
+            1u32 => map_to_property(
+                &mut props.payload_format_indicator,
+                map(take(1usize), |b: &[u8]| b[0])(rest_next)?,
+            ),
+            2u32 => map_to_property(
+                &mut props.message_expiry_interval,
+                u32(Endianness::Big)(rest_next)?,
+            ),
+            3u32 => map_to_property(&mut props.content_type, parse_string(rest_next)?),
+            8u32 => map_to_property(&mut props.response_topic, parse_string(rest_next)?),
+            9u32 => map_to_property(
+                &mut props.correlation_data,
+                map(parse_binary_data, |b| b.to_vec())(rest_next)?,
+            ),
+            17u32 => map_to_property(
+                &mut props.session_expiry_interval,
+                u32(Endianness::Big)(rest_next)?,
+            ),
+            21u32 => map_to_property(&mut props.authentication_method, parse_string(rest_next)?),
+            22u32 => map_to_property(
+                &mut props.authentication_data,
+                map(parse_binary_data, |b| b.to_vec())(rest_next)?,
+            ),
+            23u32 => map_to_property(
+                &mut props.request_problem_information,
+                map_parser(take(1usize), parse_u8_as_bool)(rest_next)?,
+            ),
+            24u32 => map_to_property(
+                &mut props.will_delay_interval,
+                u32(Endianness::Big)(rest_next)?,
+            ),
+            25u32 => map_to_property(
+                &mut props.request_response_information,
+                map_parser(take(1usize), parse_u8_as_bool)(rest_next)?,
+            ),
+            33u32 => map_to_property(&mut props.receive_maximum, u16(Endianness::Big)(rest_next)?),
+            34u32 => map_to_property(
+                &mut props.topic_alias_maximum,
+                u16(Endianness::Big)(rest_next)?,
+            ),
             38u32 => {
                 let (rest, s) = parse_string_pair(rest_next)?;
                 props
                     .user_property
                     .get_or_insert(vec![])
-                    .push(UserProperty { key: s.0, value: s.1 });
+                    .push(UserProperty {
+                        key: s.0,
+                        value: s.1,
+                    });
                 Ok((rest, ()))
-            },
-            39u32 => map_to_property(props.maximum_packet_size, u32(Endianness::Big))(rest_next),
-            _ => {
-                println!("her????");
+            }
+            39u32 => map_to_property(
+                &mut props.maximum_packet_size,
+                u32(Endianness::Big)(rest_next)?,
+            ),
+            code => {
+                println!("Received property code: {:?}", code);
                 Err(nom::Err::Failure(MalformedPacket))
-            },
+            }
         }?;
         properties_length -= (input.len() - rest_next.len()) as u32;
         input = rest_next;
@@ -292,7 +289,13 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
             will,
             clean_start: clean_start != 0u8,
             keep_alive,
-            properties,
+            session_expiry_interval: properties.session_expiry_interval,
+            receive_maximum: properties.receive_maximum,
+            maximum_packet_size: properties.maximum_packet_size,
+            topic_alias_maximum: properties.topic_alias_maximum,
+            request_response_information: properties.request_response_information,
+            request_problem_information: properties.request_problem_information,
+            user_properties: properties.user_property,
         },
     ))
 }
@@ -421,9 +424,9 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::{parse_header, parse_mqtt, parse_string};
     use crate::parser::MqttParserError::MalformedPacket;
-    use crate::protocol::{Connect, MqttPacket};
+    use crate::parser::{parse_header, parse_mqtt, parse_string};
+    use crate::protocol::{Connect, MqttPacket, Will};
 
     macro_rules! variable_uint_tests {
         ($($name:ident: $value:expr,)*) => {
@@ -524,8 +527,95 @@ mod tests {
                 will: None,
                 clean_start: true,
                 keep_alive: 10u16,
-                properties: Default::default()
+                session_expiry_interval: None,
+                receive_maximum: None,
+                maximum_packet_size: None,
+                topic_alias_maximum: None,
+                request_response_information: None,
+                request_problem_information: None,
+                user_properties: None,
             })
+        ),
+
+        connect_with_properties: (
+            &[
+                // -- Fixed header --
+                16,
+                96,
+
+                // -- Variable header --
+                // MQTT
+                0, 4, 77, 81, 84, 84, 5,
+
+                // Connect flags
+                198,
+
+                // Keep alive
+                0, 10,
+
+                // Properties
+                11, // length
+                // Session Expiry Interval
+                17, 0, 0, 0, 11,
+                // Receive Maximum
+                33, 0, 10,
+                // Topic Alias Maximum
+                34, 0, 10,
+
+                // -- Payload --
+                // Client identifier
+                0, 13, 104, 97, 118, 97, 114, 45, 116, 101, 115, 116, 105, 110, 103,
+
+                // Will properties
+                25, // length
+                // Will Delay Interval
+                24, 0, 0, 0, 1,
+                // Message Expiry Interval
+                2, 0, 0, 0, 1,
+                // Content Type
+                3, 0, 10, 112, 108, 97, 105, 110, 47, 116, 101, 120, 116,
+                // Payload Format Indicator
+                1, 1,
+
+                // Will topic
+                0, 3, 102, 111, 111,
+
+                // Will payload
+                0, 6, 116, 97, 108, 116, 97, 108,
+
+                // User name
+                0, 8, 85, 83, 69, 82, 78, 65, 77, 69,
+
+                // Password
+                0, 8, 80, 65, 83, 83, 87, 79, 82, 68
+            ],
+            MqttPacket::Connect(Connect {
+                protocol_name: "MQTT".to_string(),
+                protocol_version: 5,
+                client_identifier: "havar-testing".to_string(),
+                username: Some("USERNAME".to_string()),
+                password: Some("PASSWORD".to_string()),
+                will: Some(Will {
+                    retain: false,
+                    qos: 0,
+                    topic: "foo".to_string(),
+                    payload: vec![116, 97, 108, 116, 97, 108],
+                    delay_interval: Some(1),
+                    payload_format_indicator: Some(1),
+                    message_expiry_interval: Some(1),
+                    content_type: Some("plain/text".to_string()),
+                    response_topic: None,
+                    correlation_data: None,
+                    user_properties: None }),
+                clean_start: true,
+                keep_alive: 10,
+                session_expiry_interval: Some(11),
+                receive_maximum: Some(10),
+                maximum_packet_size: None,
+                topic_alias_maximum: Some(10),
+                request_response_information: None,
+                request_problem_information: None,
+                user_properties: None })
         ),
 
     }
