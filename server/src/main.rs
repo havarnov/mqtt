@@ -47,7 +47,15 @@ async fn process(
                     .send(MqttPacket::ConnAck(ConnAck {
                         session_present: false,
                         connect_reason: ConnectReason::Success,
-                        properties: Default::default(),
+                        session_expiry_interval: None,
+                        receive_maximum: None,
+                        maximum_qos: None,
+                        retain_available: None,
+                        maximum_packet_size: None,
+                        assigned_client_identifier: None,
+                        topic_alias_maximum: None,
+                        reason_string: None,
+                        user_properties: None
                     }))
                     .await?;
             }

@@ -53,9 +53,9 @@ pub struct Properties {
     // 35
     pub topic_alias: Option<u16>,
     // 36
-    pub maximum_qo_s: Option<u8>,
+    pub maximum_qos: Option<u8>,
     // 37
-    pub retain_available: Option<u8>,
+    pub retain_available: Option<bool>,
     // 38
     pub user_property: Option<Vec<UserProperty>>,
     // 39
@@ -117,14 +117,66 @@ pub struct Connect {
 
 #[derive(Debug, PartialEq)]
 pub enum ConnectReason {
-    Success, // TODO...
+    // 0 The Connection is accepted.
+    Success,
+    // 128 The Server does not wish to reveal the reason for the failure, or none of the other Reason Codes apply.
+    UnspecifiedError,
+    // 129 Data within the CONNECT packet could not be correctly parsed.
+    MalformedPacket,
+    // 130 Data in the CONNECT packet does not conform to this specification.
+    ProtocolError,
+    // 131 The CONNECT is valid but is not accepted by this Server.
+    ImplementationSpecificError,
+    // 132 The Server does not support the version of the MQTT protocol requested by the Client.
+    UnsupportedProtocolVersion,
+    // 133 The Client Identifier is a valid string but is not allowed by the Server.
+    ClientIdentifierNotValid,
+    // 134 The Server does not accept the User Name or Password specified by the Client
+    BadUserNameOrPassword,
+    // 135 The Client is not authorized to connect.
+    NotAuthorized,
+    // 136 The MQTT Server is not available.
+    ServerUnavailable,
+    // 137 The Server is busy. Try again later.
+    ServerBusy,
+    // 138 This Client has been banned by administrative action. Contact the server administrator.
+    Banned,
+    // 140 The authentication method is not supported or does not match the authentication method currently in use.
+    BadAuthenticationMethod,
+    // 144 The Will Topic Name is not malformed, but is not accepted by this Server.
+    TopicNameInvalid,
+    // 149 The CONNECT packet exceeded the maximum permissible size.
+    PacketTooLarge,
+    // 151 An implementation or administrative imposed limit has been exceeded.
+    QuotaExceeded,
+    // 153 The Will Payload does not match the specified Payload Format Indicator.
+    PayloadFormatInvalid,
+    // 154 The Server does not support retained messages, and Will Retain was set to 1.
+    RetainNotSupported,
+    // 155 The Server does not support the QoS set in Will QoS.
+    QoSNotSupported,
+    // 156 The Client should temporarily use another server.
+    UseAnotherServer,
+    // 157 The Client should permanently use another server.
+    ServerMoved,
+    // 159 The connection rate limit has been exceeded.
+    ConnectionRateExceeded,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ConnAck {
     pub session_present: bool,
     pub connect_reason: ConnectReason,
-    pub properties: Properties,
+    // properties
+    pub session_expiry_interval: Option<u32>,
+    pub receive_maximum: Option<u16>,
+    pub maximum_qos: Option<u8>,
+    pub retain_available: Option<bool>,
+    pub maximum_packet_size: Option<u32>,
+    pub assigned_client_identifier: Option<String>,
+    pub topic_alias_maximum: Option<u16>,
+    pub reason_string: Option<String>,
+    pub user_properties: Option<Vec<UserProperty>>,
 }
 
 #[derive(Debug, PartialEq)]
