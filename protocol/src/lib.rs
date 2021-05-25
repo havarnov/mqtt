@@ -1,6 +1,5 @@
+pub mod codec;
 pub mod framed;
-pub mod parse;
-pub mod serialize;
 pub mod types;
 
 #[cfg(test)]

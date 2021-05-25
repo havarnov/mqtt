@@ -1,6 +1,6 @@
-use crate::parse::MqttParserError::MalformedPacket;
-use crate::parse::{parse_header, parse_mqtt, parse_string};
-use crate::types::{Connect, ConnAck, ConnectReason, MqttPacket, Will};
+use crate::codec::decoding::MqttParserError::MalformedPacket;
+use crate::codec::decoding::{parse_header, parse_mqtt, parse_string};
+use crate::types::{ConnAck, Connect, ConnectReason, MqttPacket, Will};
 
 macro_rules! variable_uint_tests {
     ($($name:ident: $value:expr,)*) => {

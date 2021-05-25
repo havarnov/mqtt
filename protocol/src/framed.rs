@@ -1,8 +1,8 @@
 use bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::parse::parse_mqtt;
-use crate::serialize::to_bytes;
+use crate::codec::decoding::parse_mqtt;
+use crate::codec::encoding::to_bytes;
 use crate::types::MqttPacket;
 use std::fmt::{Display, Formatter};
 use std::io::Error;

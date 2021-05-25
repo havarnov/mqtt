@@ -1,5 +1,8 @@
-use std::str;
-
+use crate::codec::decoding::MqttParserError::MalformedPacket;
+use crate::types::{
+    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
+    QoS, Subscribe, TopicFilter, UserProperty, Will,
+};
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
 use nom::bytes::streaming::take;
@@ -9,12 +12,7 @@ use nom::number::streaming::{u16, u32};
 use nom::number::Endianness;
 use nom::sequence::tuple;
 use nom::IResult;
-
-#[cfg(test)]
-mod tests;
-
-use crate::types::{Connect, Disconnect, DisconnectReason, MqttPacket, Properties, Publish, QoS, Subscribe, TopicFilter, UserProperty, Will, ConnAck, ConnectReason};
-use MqttParserError::*;
+use std::str;
 
 #[derive(Debug, PartialEq)]
 pub enum MqttParserError<I> {
@@ -34,10 +32,10 @@ impl<I> nom::error::ParseError<I> for MqttParserError<I> {
 
 type MqttParserResult<I, O> = IResult<I, O, MqttParserError<I>>;
 
-struct MqttHeader {
-    packet_type: u8,
-    flags: u8,
-    packet_size: u32,
+pub(in crate::codec) struct MqttHeader {
+    pub(in crate::codec) packet_type: u8,
+    pub(in crate::codec) flags: u8,
+    pub(in crate::codec) packet_size: u32,
 }
 
 fn parse_first_byte(input: (&[u8], usize)) -> IResult<(&[u8], usize), (u8, u8)> {
@@ -66,7 +64,7 @@ fn parse_variable_u32(input: &[u8]) -> MqttParserResult<&[u8], u32> {
     }
 }
 
-fn parse_string(input: &[u8]) -> MqttParserResult<&[u8], String> {
+pub(in crate::codec) fn parse_string(input: &[u8]) -> MqttParserResult<&[u8], String> {
     let (rest, length) = u16(Endianness::Big)(input)?;
     let (rest, string_bytes) = take(length)(rest)?;
     match str::from_utf8(string_bytes) {
@@ -81,7 +79,7 @@ fn parse_string_pair(input: &[u8]) -> MqttParserResult<&[u8], (String, String)> 
     Ok((input, (key, value)))
 }
 
-fn parse_header(input: &[u8]) -> MqttParserResult<&[u8], MqttHeader> {
+pub(in crate::codec) fn parse_header(input: &[u8]) -> MqttParserResult<&[u8], MqttHeader> {
     let (rest, (packet_type, flags)) =
         match bits::<_, _, _, nom::error::Error<_>, _>(parse_first_byte)(input) {
             Ok(res) => Ok(res),
@@ -423,24 +421,27 @@ fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
         156 => ConnectReason::UseAnotherServer,
         157 => ConnectReason::ServerMoved,
         159 => ConnectReason::ConnectionRateExceeded,
-        _ => return Err(nom::Err::Failure(MalformedPacket))
+        _ => return Err(nom::Err::Failure(MalformedPacket)),
     };
 
     let (input, properties) = parse_properties(input)?;
 
-    Ok((input, ConnAck {
-        session_present: session_present,
-        connect_reason: connect_reason,
-        session_expiry_interval: properties.session_expiry_interval,
-        receive_maximum: properties.receive_maximum,
-        maximum_qos: properties.maximum_qos,
-        retain_available: properties.retain_available,
-        maximum_packet_size: properties.maximum_packet_size,
-        assigned_client_identifier: properties.assigned_client_identifier,
-        topic_alias_maximum: properties.topic_alias_maximum,
-        reason_string: properties.reason_string,
-        user_properties: properties.user_property,
-    }))
+    Ok((
+        input,
+        ConnAck {
+            session_present: session_present,
+            connect_reason: connect_reason,
+            session_expiry_interval: properties.session_expiry_interval,
+            receive_maximum: properties.receive_maximum,
+            maximum_qos: properties.maximum_qos,
+            retain_available: properties.retain_available,
+            maximum_packet_size: properties.maximum_packet_size,
+            assigned_client_identifier: properties.assigned_client_identifier,
+            topic_alias_maximum: properties.topic_alias_maximum,
+            reason_string: properties.reason_string,
+            user_properties: properties.user_property,
+        },
+    ))
 }
 
 pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {

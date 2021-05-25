@@ -12,7 +12,7 @@ pub fn to_bytes(packet: &MqttPacket) -> Vec<u8> {
 
             match c.connect_reason {
                 ConnectReason::Success => variable_header.push(0u8),
-                _ => unimplemented!()
+                _ => unimplemented!(),
             }
 
             // TODO: properties

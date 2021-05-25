@@ -55,7 +55,7 @@ async fn process(
                         assigned_client_identifier: None,
                         topic_alias_maximum: None,
                         reason_string: None,
-                        user_properties: None
+                        user_properties: None,
                     }))
                     .await?;
             }
