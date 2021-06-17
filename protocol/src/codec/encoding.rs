@@ -1,29 +1,370 @@
-use crate::types::{ConnectReason, MqttPacket, QoS, SubscribeReason};
+use crate::types::{ConnectReason, MqttPacket, QoS, SubscribeReason, ConnAck, Properties, Connect};
 
-pub fn to_bytes(packet: &MqttPacket) -> Vec<u8> {
+fn encode_connect_reason(reason: &ConnectReason) -> u8 {
+    match reason {
+        ConnectReason::Success => 0,
+        ConnectReason::UnspecifiedError => 128,
+        ConnectReason::MalformedPacket => 129,
+        ConnectReason::ProtocolError => 130,
+        ConnectReason::ImplementationSpecificError => 131,
+        ConnectReason::UnsupportedProtocolVersion => 132,
+        ConnectReason::ClientIdentifierNotValid => 133,
+        ConnectReason::BadUserNameOrPassword => 134,
+        ConnectReason::NotAuthorized => 135,
+        ConnectReason::ServerUnavailable => 136,
+        ConnectReason::ServerBusy => 137,
+        ConnectReason::Banned => 138,
+        ConnectReason::BadAuthenticationMethod => 140,
+        ConnectReason::TopicNameInvalid => 144,
+        ConnectReason::PacketTooLarge => 149,
+        ConnectReason::QuotaExceeded => 151,
+        ConnectReason::PayloadFormatInvalid => 153,
+        ConnectReason::RetainNotSupported => 154,
+        ConnectReason::QoSNotSupported => 155,
+        ConnectReason::UseAnotherServer => 156,
+        ConnectReason::ServerMoved => 157,
+        ConnectReason::ConnectionRateExceeded => 159,
+    }
+}
+
+fn encode_variable_u32(mut value: u32) -> Vec<u8> {
+    let mut res = vec![];
+    loop {
+        let mut byte: u8 = (value % 128) as u8;
+        value = value / 128;
+        if value > 0 {
+            byte = byte | 128;
+        }
+        res.push(byte);
+
+        if value <= 0 {
+            break;
+        }
+    }
+
+    res
+}
+
+fn encode_string(string: &str) -> Vec<u8> {
+    let bytes: Vec<u8> = string.as_bytes().to_vec();
+    let mut result = (bytes.len() as u16).to_be_bytes().to_vec();
+    result.extend(&bytes);
+    result
+}
+
+fn encode_binary(binary: &[u8]) -> Vec<u8> {
+    let mut result: Vec<u8> = (binary.len() as u16).to_be_bytes().to_vec();
+    result.extend(binary);
+    result
+}
+
+fn encode_properties(properties: &Properties) -> Vec<u8> {
+    let mut payload = vec![];
+
+    // 1
+    if let Some(payload_format_indicator) = properties.payload_format_indicator {
+        payload.extend(&encode_variable_u32(1));
+        payload.push(payload_format_indicator);
+    }
+
+    // 2
+    if let Some(message_expiry_interval) = properties.message_expiry_interval {
+        payload.extend(&encode_variable_u32(2));
+        payload.extend(&message_expiry_interval.to_be_bytes());
+    }
+
+    // 3
+    if let Some(content_type) = &properties.content_type {
+        payload.extend(&encode_variable_u32(3));
+        payload.extend(&encode_string(content_type));
+    }
+
+    // 8
+    if let Some(response_topic) = &properties.response_topic {
+        payload.extend(&encode_variable_u32(8));
+        payload.extend(&encode_string(response_topic));
+    }
+
+    // 9
+    if let Some(correlation_data) = &properties.correlation_data {
+        payload.extend(&encode_variable_u32(9));
+        payload.extend(&encode_binary(correlation_data));
+    }
+
+    // 11
+    if let Some(subscription_identifier) = properties.subscription_identifier {
+        payload.extend(&encode_variable_u32(11));
+        payload.extend(&subscription_identifier.to_be_bytes());
+    }
+
+    // 17
+    if let Some(session_expiry_interval) = properties.session_expiry_interval {
+        payload.extend(&encode_variable_u32(17));
+        payload.extend(&session_expiry_interval.to_be_bytes());
+    }
+
+    // 18
+    if let Some(assigned_client_identifier) = &properties.assigned_client_identifier {
+        payload.extend(&encode_variable_u32(18));
+        payload.extend(&encode_string(assigned_client_identifier));
+    }
+
+    // 19
+    if let Some(server_keep_alive) = properties.server_keep_alive {
+        payload.extend(&encode_variable_u32(19));
+        payload.extend(&server_keep_alive.to_be_bytes());
+    }
+
+    // 21
+    if let Some(authentication_method) = &properties.authentication_method {
+        payload.extend(&encode_variable_u32(21));
+        payload.extend(&encode_string(authentication_method));
+    }
+
+    // 22
+    if let Some(authentication_data) = &properties.authentication_data {
+        payload.extend(&encode_variable_u32(22));
+        payload.extend(&encode_binary(authentication_data));
+    }
+
+    // 23
+    if let Some(request_problem_information) = properties.request_problem_information {
+        payload.extend(&encode_variable_u32(23));
+        payload.push(if request_problem_information { 1u8 } else { 0u8 });
+    }
+
+    // 24
+    if let Some(will_delay_interval) = properties.will_delay_interval {
+        payload.extend(&encode_variable_u32(24));
+        payload.extend(&will_delay_interval.to_be_bytes());
+    }
+
+    // 25
+    if let Some(request_response_information) = properties.request_response_information {
+        payload.extend(&encode_variable_u32(25));
+        payload.push(if request_response_information { 1u8 } else { 0u8 });
+    }
+
+    // 26
+    if let Some(response_information) = &properties.response_information {
+        payload.extend(&encode_variable_u32(26));
+        payload.extend(&encode_string(response_information));
+    }
+
+    // 28
+    if let Some(server_reference) = &properties.server_reference {
+        payload.extend(&encode_variable_u32(28));
+        payload.extend(&encode_string(server_reference));
+    }
+
+    // 31
+    if let Some(reason_string) = &properties.reason_string {
+        payload.extend(&encode_variable_u32(31));
+        payload.extend(&encode_string(reason_string));
+    }
+
+    // 33
+    if let Some(receive_maximum) = properties.receive_maximum {
+        payload.extend(&encode_variable_u32(33));
+        payload.extend(&receive_maximum.to_be_bytes());
+    }
+
+    // 34
+    if let Some(topic_alias_maximum) = properties.topic_alias_maximum {
+        payload.extend(&encode_variable_u32(34));
+        payload.extend(&topic_alias_maximum.to_be_bytes());
+    }
+
+    // 35
+    if let Some(topic_alias) = properties.topic_alias {
+        payload.extend(&encode_variable_u32(35));
+        payload.extend(&topic_alias.to_be_bytes());
+    }
+
+    // 36
+    if let Some(maximum_qos) = properties.maximum_qos {
+        payload.extend(&encode_variable_u32(36));
+        payload.push(maximum_qos);
+    }
+
+    // 37
+    if let Some(retain_available) = properties.retain_available {
+        payload.extend(&encode_variable_u32(37));
+        payload.push(if retain_available { 1u8 } else { 0u8 });
+    }
+
+    // 38
+    if let Some(user_properties) = &properties.user_property {
+        for user_property in user_properties {
+            payload.extend(&encode_variable_u32(38));
+            payload.extend(&encode_string(&user_property.key));
+            payload.extend(&encode_string(&user_property.value));
+        }
+    }
+
+    // 39
+    if let Some(maximum_packet_size) = properties.maximum_packet_size {
+        payload.extend(&encode_variable_u32(39));
+        payload.extend(&maximum_packet_size.to_be_bytes());
+    }
+
+    // 40
+    if let Some(wildcard_subscription_available) = properties.wildcard_subscription_available {
+        payload.extend(&encode_variable_u32(40));
+        payload.push(wildcard_subscription_available);
+    }
+
+    // 41
+    if let Some(subscription_identifier_available) = properties.subscription_identifier_available {
+        payload.extend(&encode_variable_u32(41));
+        payload.push(subscription_identifier_available);
+    }
+
+    // 42
+    if let Some(shared_subscription_available) = properties.shared_subscription_available {
+        payload.extend(&encode_variable_u32(42));
+        payload.push(shared_subscription_available);
+    }
+
+    let mut res = encode_variable_u32(payload.len() as u32);
+    res.extend(&payload);
+    res
+}
+
+fn encode_connack(connack: &ConnAck) -> Vec<u8> {
+    let properties = Properties {
+        session_expiry_interval: connack.session_expiry_interval,
+        receive_maximum: connack.receive_maximum,
+        maximum_qos: connack.maximum_qos,
+        retain_available: connack.retain_available,
+        maximum_packet_size: connack.maximum_packet_size,
+        assigned_client_identifier: connack.assigned_client_identifier.to_owned(),
+        topic_alias_maximum: connack.topic_alias_maximum,
+        reason_string: connack.reason_string.to_owned(),
+        user_property: connack.user_properties.clone(),
+        ..Default::default()
+    };
+
+    let mut variable_header = vec![
+        if connack.session_present { 0b0000_00001u8 } else { 0u8},
+        encode_connect_reason(&connack.connect_reason),
+    ];
+    variable_header.extend(&encode_properties(&properties));
+
+    let mut result = vec![0b0010_0000u8];
+    result.extend(&encode_variable_u32(variable_header.len() as u32));
+    result.extend(&variable_header);
+    result
+}
+
+fn encode_connect(connect: &Connect) -> Vec<u8> {
+    let mut connect_flags = 0u8;
+
+    if connect.username.is_some() {
+        connect_flags |= 0b1000_0000u8;
+    }
+
+    if connect.password.is_some() {
+        connect_flags |= 0b0100_0000u8;
+    }
+
+    if let Some(will) = &connect.will {
+        connect_flags |= 0b0000_0100u8;
+
+        if will.retain {
+            connect_flags |= 0b0010_0000u8;
+        }
+
+        match will.qos {
+            1u8 => connect_flags |= 0b0000_1000u8,
+            2u8 => connect_flags |= 0b0001_0000u8,
+            0u8 => (),
+            _ => unreachable!()
+        }
+    }
+
+    if connect.clean_start {
+        connect_flags |= 0b0000_0010u8;
+    }
+
+    let mut variable_header = vec![
+        // Protocol name (MQTT)
+        0u8,
+        4u8,
+        0b01001101u8,
+        0b01010001u8,
+        0b01010100u8,
+        0b01010100u8,
+
+        // Protocol version (5)
+        5u8,
+
+        // connect flags
+        connect_flags,
+    ];
+
+    // keep alive
+    variable_header.extend(&connect.keep_alive.to_be_bytes());
+
+    let properties = Properties {
+        session_expiry_interval: connect.session_expiry_interval,
+        receive_maximum: connect.receive_maximum,
+        maximum_packet_size: connect.maximum_packet_size,
+        topic_alias_maximum: connect.topic_alias_maximum,
+        request_response_information: connect.request_response_information,
+        request_problem_information: connect.request_problem_information,
+        user_property: connect.user_properties.to_owned(),
+        ..Default::default()
+    };
+    variable_header.extend(&encode_properties(&properties));
+
+    let mut payload: Vec<u8> = vec![];
+    payload.extend(&encode_string(&connect.client_identifier));
+
+    if let Some(will) = &connect.will {
+
+        println!("{:?}", will);
+
+        let will_properties = Properties {
+            will_delay_interval: will.delay_interval,
+            payload_format_indicator: will.payload_format_indicator,
+            message_expiry_interval: will.message_expiry_interval,
+            content_type: will.content_type.to_owned(),
+            response_topic: will.response_topic.to_owned(),
+            correlation_data: will.correlation_data.to_owned(),
+            user_property: will.user_properties.to_owned(),
+            ..Default::default()
+        };
+        payload.extend(&encode_properties(&will_properties));
+
+        payload.extend(&encode_string(&will.topic));
+        payload.extend(&encode_binary(&will.payload));
+    }
+
+    if let Some(username) = &connect.username {
+        payload.extend(&encode_string(username));
+    }
+
+    if let Some(password) = &connect.password {
+        payload.extend(&encode_string(password));
+    }
+
+    let mut result = vec![0b0001_0000u8];
+    result.extend(&encode_variable_u32((variable_header.len() + payload.len()) as u32));
+    result.extend(&variable_header);
+    result.extend(&payload);
+    result
+}
+
+pub fn encode(packet: &MqttPacket) -> Vec<u8> {
     match packet {
         MqttPacket::PingResp => {
             return vec![0b1101_0000u8, 0u8];
         }
-        MqttPacket::ConnAck(c) => {
-            let mut variable_header = vec![];
-
-            variable_header.push(if c.session_present { 0b0000_0001 } else { 0u8 });
-
-            match c.connect_reason {
-                ConnectReason::Success => variable_header.push(0u8),
-                _ => unimplemented!(),
-            }
-
-            // TODO: properties
-            // empty properties
-            variable_header.push(0u8);
-
-            let mut fixed_header = vec![0b0010_0000u8, variable_header.len() as u8];
-            fixed_header.extend_from_slice(&variable_header);
-
-            return fixed_header;
-        }
+        MqttPacket::PingReq => {
+            return vec![0b1100_0000u8, 0u8];
+        },
+        MqttPacket::ConnAck(c) => encode_connack(c),
         MqttPacket::Publish(publish) => {
             let mut variable_header_and_payload = vec![];
 
@@ -64,7 +405,7 @@ pub fn to_bytes(packet: &MqttPacket) -> Vec<u8> {
             let mut result = vec![fst, variable_header_and_payload.len() as u8];
             result.extend_from_slice(&variable_header_and_payload);
             return result;
-        }
+        },
         MqttPacket::SubAck(sub_ack) => {
             let mut variable_header_and_payload = vec![];
             // TODO encode i16
@@ -84,7 +425,38 @@ pub fn to_bytes(packet: &MqttPacket) -> Vec<u8> {
             let mut fixed_header = vec![0b1001_0000, variable_header_and_payload.len() as u8];
             fixed_header.extend_from_slice(&variable_header_and_payload);
             return fixed_header;
-        }
+        },
+        MqttPacket::Connect(connect) => encode_connect(connect),
         _ => unimplemented!("to_bytes"),
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::encode_variable_u32;
+
+    macro_rules! variable_uint_tests {
+    ($($name:ident: $value:expr,)*) => {
+    $(
+        #[test]
+        fn $name() {
+            let (expected, input) = $value;
+            assert_eq!(&expected[..], &encode_variable_u32(input)[..]);
+        }
+    )*
+    }
+}
+
+    // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901011
+    variable_uint_tests! {
+    one_lower: (&[0b0000_0000u8], 0u32),
+    one_upper: (&[0x7fu8], 127u32),
+    two_lower: (&[0x80u8, 0x01u8], 128u32),
+    two_upper: (&[0xffu8, 0x7fu8], 16_383u32),
+    three_lower: (&[0x80u8, 0x80u8, 0x01u8], 16_384u32),
+    three_upper: (&[0xffu8, 0xffu8, 0x7fu8], 2_097_151u32),
+    four_lower: (&[0x80u8, 0x80u8, 0x80u8, 0x01u8], 2_097_152u32),
+    four_upper: (&[0xffu8, 0xffu8, 0xffu8, 0x07fu8], 268_435_455u32),
+}
 }

@@ -74,7 +74,7 @@ impl Properties {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct UserProperty {
     pub key: String,
     pub value: String,
@@ -113,6 +113,8 @@ pub struct Connect {
     pub request_response_information: Option<bool>,
     pub request_problem_information: Option<bool>,
     pub user_properties: Option<Vec<UserProperty>>,
+    pub authentication_method: Option<String>,
+    pub authentication_data: Option<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq)]

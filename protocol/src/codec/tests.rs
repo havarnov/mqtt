@@ -1,50 +1,20 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
-use crate::codec::decoding::{parse_header, parse_mqtt, parse_string};
+use crate::codec::decoding::{parse_mqtt, MqttParserError};
+use crate::codec::encoding::encode;
 use crate::types::{ConnAck, Connect, ConnectReason, MqttPacket, Will};
-
-macro_rules! variable_uint_tests {
-    ($($name:ident: $value:expr,)*) => {
-    $(
-        #[test]
-        fn $name() -> Result<(), String> {
-            let (input, expected) = $value;
-            if let Ok((rest, header)) = parse_header(input) {
-                assert_eq!(header.packet_size, expected);
-                assert_eq!(rest.len(), 0usize);
-                Ok(())
-            } else {
-                Err("failed.".to_string())
-            }
-        }
-    )*
-    }
-}
-
-// https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901011
-variable_uint_tests! {
-    one_lower: (&[0b1100_0000u8, 0b0000_0000u8], 0u32),
-    one_upper: (&[0b1100_0000u8, 0x7fu8], 127u32),
-    two_lower: (&[0b1100_0000u8, 0x80u8, 0x01u8], 128u32),
-    two_upper: (&[0b1100_0000u8, 0xffu8, 0x7fu8], 16_383u32),
-    three_lower: (&[0b1100_0000u8, 0x80u8, 0x80u8, 0x01u8], 16_384u32),
-    three_upper: (&[0b1100_0000u8, 0xffu8, 0xffu8, 0x7fu8], 2_097_151u32),
-    four_lower: (&[0b1100_0000u8, 0x80u8, 0x80u8, 0x80u8, 0x01u8], 2_097_152u32),
-    four_upper: (&[0b1100_0000u8, 0xffu8, 0xffu8, 0xffu8, 0x07fu8], 268_435_455u32),
-}
 
 macro_rules! packet_tests {
     ($($name:ident: $value:expr,)*) => {
     $(
         #[test]
-        fn $name() -> Result<(), String> {
+        fn $name() -> Result<(), nom::Err<MqttParserError<&'static [u8]>>> {
             let (input, expected) = $value;
-            if let Ok((rest, packet)) = parse_mqtt(input) {
-                assert_eq!(packet, expected);
-                assert_eq!(rest.len(), 0usize);
-                Ok(())
-            } else {
-                Err("failed.".to_string())
-            }
+            let (rest, packet) = parse_mqtt(input)?;
+            assert_eq!(packet, expected);
+            assert_eq!(rest.len(), 0usize);
+            let encoded = encode(&packet);
+            assert_eq!(&input[..], &encoded[..]);
+            Ok(())
         }
     )*
     }
@@ -108,6 +78,8 @@ packet_tests! {
             request_response_information: None,
             request_problem_information: None,
             user_properties: None,
+            authentication_data: None,
+            authentication_method: None
         })
     ),
 
@@ -142,14 +114,14 @@ packet_tests! {
 
             // Will properties
             25, // length
-            // Will Delay Interval
-            24, 0, 0, 0, 1,
+            // Payload Format Indicator
+            1, 1,
             // Message Expiry Interval
             2, 0, 0, 0, 1,
             // Content Type
             3, 0, 10, 112, 108, 97, 105, 110, 47, 116, 101, 120, 116,
-            // Payload Format Indicator
-            1, 1,
+            // Will Delay Interval
+            24, 0, 0, 0, 1,
 
             // Will topic
             0, 3, 102, 111, 111,
@@ -189,7 +161,9 @@ packet_tests! {
             topic_alias_maximum: Some(10),
             request_response_information: None,
             request_problem_information: None,
-            user_properties: None })
+            user_properties: None,
+            authentication_method: None,
+            authentication_data: None})
     ),
 
     simple_connack: (
@@ -243,31 +217,4 @@ macro_rules! parsing_should_fail_tests {
 
 parsing_should_fail_tests! {
     pingreq_with_non_empty_flags: (&[0b1100_0001u8, 0u8], nom::Err::Failure(MalformedPacket)),
-}
-
-macro_rules! string_tests {
-    ($($name:ident: $input:expr,)*) => {
-    $(
-        #[test]
-        fn $name() -> Result<(), String> {
-            let input_as_bytes = $input.as_bytes();
-            let length = (input_as_bytes.len() as u16).to_be_bytes();
-            let mut v = vec![];
-            v.extend_from_slice(&length);
-            v.extend_from_slice(input_as_bytes);
-            if let Ok((rest, result)) = parse_string(&v) {
-                assert_eq!(&result, $input);
-                assert_eq!(rest.len(), 0usize);
-                Ok(())
-            } else {
-                Err(format!("failed to parse string: {}.", $input))
-            }
-        }
-    )*
-    }
-}
-
-string_tests! {
-    short_string: "🚀",
-    longer_string: "🚀longer string with spaces & weird signs ‰{¢‰",
 }

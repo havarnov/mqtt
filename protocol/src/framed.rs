@@ -2,7 +2,7 @@ use bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::codec::decoding::parse_mqtt;
-use crate::codec::encoding::to_bytes;
+use crate::codec::encoding::encode;
 use crate::types::MqttPacket;
 use std::fmt::{Display, Formatter};
 use std::io::Error;
@@ -30,7 +30,7 @@ impl Encoder<MqttPacket> for MqttPacketDecoder {
     type Error = MqttPacketDecoderError;
 
     fn encode(&mut self, item: MqttPacket, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let bytes = to_bytes(&item);
+        let bytes = encode(&item);
         dst.extend_from_slice(&bytes);
         Ok(())
     }

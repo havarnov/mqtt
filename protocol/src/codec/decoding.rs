@@ -296,6 +296,8 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
             request_response_information: properties.request_response_information,
             request_problem_information: properties.request_problem_information,
             user_properties: properties.user_property,
+            authentication_method: properties.authentication_method,
+            authentication_data: properties.authentication_data,
         },
     ))
 }
@@ -471,4 +473,67 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
         14u8 => map(parse_disconnect, MqttPacket::Disconnect)(rest),
         _ => Err(nom::Err::Failure(MalformedPacket)),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_variable_u32, parse_string};
+
+    macro_rules! variable_uint_tests {
+        ($($name:ident: $value:expr,)*) => {
+        $(
+            #[test]
+            fn $name() -> Result<(), String> {
+                let (input, expected) = $value;
+                if let Ok((rest, value)) = parse_variable_u32(input) {
+                    assert_eq!(value, expected);
+                    assert_eq!(rest.len(), 0usize);
+                    Ok(())
+                } else {
+                    Err("failed.".to_string())
+                }
+            }
+        )*
+        }
+    }
+
+    // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901011
+    variable_uint_tests! {
+        one_lower: (&[0b0000_0000u8], 0u32),
+        one_upper: (&[0x7fu8], 127u32),
+        two_lower: (&[0x80u8, 0x01u8], 128u32),
+        two_upper: (&[0xffu8, 0x7fu8], 16_383u32),
+        three_lower: (&[0x80u8, 0x80u8, 0x01u8], 16_384u32),
+        three_upper: (&[0xffu8, 0xffu8, 0x7fu8], 2_097_151u32),
+        four_lower: (&[0x80u8, 0x80u8, 0x80u8, 0x01u8], 2_097_152u32),
+        four_upper: (&[0xffu8, 0xffu8, 0xffu8, 0x07fu8], 268_435_455u32),
+    }
+
+    macro_rules! string_tests {
+        ($($name:ident: $input:expr,)*) => {
+        $(
+            #[test]
+            fn $name() -> Result<(), String> {
+                let input_as_bytes = $input.as_bytes();
+                let length = (input_as_bytes.len() as u16).to_be_bytes();
+                let mut v = vec![];
+                v.extend_from_slice(&length);
+                v.extend_from_slice(input_as_bytes);
+                if let Ok((rest, result)) = parse_string(&v) {
+                    assert_eq!(&result, $input);
+                    assert_eq!(rest.len(), 0usize);
+                    Ok(())
+                } else {
+                    Err(format!("failed to parse string: {}.", $input))
+                }
+            }
+        )*
+        }
+    }
+
+    string_tests! {
+        short_string: "🚀",
+        longer_string: "🚀longer string with spaces & weird signs ‰{¢‰",
+    }
+
 }
