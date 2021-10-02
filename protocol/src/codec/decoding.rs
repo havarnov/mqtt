@@ -1,7 +1,7 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
-    QoS, Subscribe, TopicFilter, UserProperty, Will,
+    QoS, Subscribe, TopicFilter, Unsubscribe, UserProperty, Will,
 };
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
@@ -396,6 +396,35 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
     ))
 }
 
+fn parse_unsubscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Unsubscribe> {
+    let len = input.len();
+    let (rest, packet_identifier) = u16(Endianness::Big)(input)?;
+    let (mut rest, properties) = parse_properties(rest)?;
+
+    let variable_header_len = len - rest.len();
+    let mut remaining_len = packet_size - (variable_header_len as u32);
+    if remaining_len == 0 {
+        return Err(nom::Err::Failure(MalformedPacket));
+    }
+
+    let mut topic_filters = Vec::new();
+    while remaining_len > 0 {
+        let (temp_rest, topic_filter) = parse_string(rest)?;
+        topic_filters.push(topic_filter);
+        remaining_len = remaining_len - ((rest.len() - temp_rest.len()) as u32);
+        rest = temp_rest;
+    }
+
+    Ok((
+        rest,
+        Unsubscribe {
+            packet_identifier: packet_identifier,
+            user_properties: properties.user_property,
+            topic_filters: topic_filters,
+        },
+    ))
+}
+
 fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
     let (input, connect_acknowledge_flags) = take(1usize)(input)?;
     let session_present = connect_acknowledge_flags[0] & 0b0000_0001 == 1;
@@ -456,6 +485,8 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
             .map(|(r, publish)| (r, MqttPacket::Publish(publish))),
         8u8 => parse_subscribe(header.packet_size, rest)
             .map(|(r, subscribe)| (r, MqttPacket::Subscribe(subscribe))),
+        10u8 => parse_unsubscribe(header.packet_size, rest)
+            .map(|(r, unsubscribe)| (r, MqttPacket::Unsubscribe(unsubscribe))),
         12u8 => {
             if header.flags != 0u8 {
                 Err(nom::Err::Failure(MalformedPacket))

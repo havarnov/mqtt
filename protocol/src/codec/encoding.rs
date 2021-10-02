@@ -1,4 +1,6 @@
-use crate::types::{ConnectReason, MqttPacket, QoS, SubscribeReason, ConnAck, Properties, Connect};
+use crate::types::{
+    ConnAck, Connect, ConnectReason, MqttPacket, Properties, QoS, SubscribeReason, Unsubscribe,
+};
 
 fn encode_connect_reason(reason: &ConnectReason) -> u8 {
     match reason {
@@ -257,6 +259,28 @@ fn encode_connack(connack: &ConnAck) -> Vec<u8> {
     result
 }
 
+fn encode_unsubscribe(unsubscribe: &Unsubscribe) -> Vec<u8> {
+    let mut variable_header_and_payload = vec![];
+    variable_header_and_payload.extend(unsubscribe.packet_identifier.to_be_bytes());
+    let properties = Properties {
+        user_property: unsubscribe.user_properties.to_owned(),
+        ..Default::default()
+    };
+    variable_header_and_payload.extend(&encode_properties(&properties));
+
+    for topic_filter in unsubscribe.topic_filters.iter() {
+        variable_header_and_payload.extend(&encode_string(&topic_filter));
+    }
+
+    let total_len = &encode_variable_u32(variable_header_and_payload.len() as u32);
+    let mut result = Vec::with_capacity(variable_header_and_payload.len() + total_len.len());
+    result.push(0b1010_0000);
+    result.extend(total_len);
+    result.extend(&variable_header_and_payload);
+
+    result
+}
+
 fn encode_connect(connect: &Connect) -> Vec<u8> {
     let mut connect_flags = 0u8;
 
@@ -427,6 +451,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
             return fixed_header;
         },
         MqttPacket::Connect(connect) => encode_connect(connect),
+        MqttPacket::Unsubscribe(unsubscribe) => encode_unsubscribe(unsubscribe),
         _ => unimplemented!("to_bytes"),
     }
 }

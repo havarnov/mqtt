@@ -2,12 +2,19 @@
 pub enum MqttPacket {
     Connect(Connect),
     ConnAck(ConnAck),
-    Disconnect(Disconnect),
+    Publish(Publish),
+    PubAck,  // TODO: impl decode/encode
+    PubRec,  // TODO: impl decode/encode
+    PubRel,  // TODO: impl decode/encode
+    PubComp, // TODO: impl decode/encode
     Subscribe(Subscribe),
     SubAck(SubAck),
+    Unsubscribe(Unsubscribe),
+    UnsubAck, // TODO: impl decode/encode
     PingReq,
     PingResp,
-    Publish(Publish),
+    Disconnect(Disconnect),
+    Auth, // TODO: impl decode/encode
 }
 
 #[derive(Debug, PartialEq, Default)]
@@ -239,4 +246,12 @@ pub struct SubAck {
     pub packet_identifier: u16,
     pub properties: Properties,
     pub reasons: Vec<SubscribeReason>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Unsubscribe {
+    pub packet_identifier: u16,
+    pub topic_filters: Vec<String>,
+    // properties
+    pub user_properties: Option<Vec<UserProperty>>,
 }

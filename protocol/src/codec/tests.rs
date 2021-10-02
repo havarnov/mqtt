@@ -1,7 +1,7 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
-use crate::types::{ConnAck, Connect, ConnectReason, MqttPacket, Will};
+use crate::types::{ConnAck, Connect, ConnectReason, MqttPacket, Unsubscribe, Will};
 
 macro_rules! packet_tests {
     ($($name:ident: $value:expr,)*) => {
@@ -192,6 +192,32 @@ packet_tests! {
             topic_alias_maximum: None,
             reason_string: None,
             user_properties: None,
+        })
+    ),
+
+    unsubscribe: (
+        &[
+            // -- Fixed header --
+            0b1010_0000u8,
+            11u8, // packet length
+
+            // -- Variable header --
+            // Packet identifier
+            0u8,
+            1u8,
+            // No user properties
+            // Properties
+            0u8, // property length
+
+            // -- Payload --
+            // (1 or multiple topic filter names as ut8 strings)
+            // foobar
+            0u8, 6u8, 0x66, 0x6F, 0x6F, 0x62, 0x61, 0x72
+        ],
+        MqttPacket::Unsubscribe(Unsubscribe {
+            packet_identifier: 1u16,
+            user_properties: None,
+            topic_filters: vec!["foobar".to_string()]
         })
     ),
 
