@@ -55,10 +55,10 @@ fn parse_variable_u32(input: &[u8]) -> MqttParserResult<&[u8], u32> {
         rest = rest_next;
 
         if size[0] >= 128u8 {
-            result += (size[0] as u32 - 128u32) << shift * 7;
+            result += (size[0] as u32 - 128u32) << (shift * 7);
             shift += 1;
         } else {
-            result += (size[0] as u32) << 7 * shift;
+            result += (size[0] as u32) << (shift * 7);
             break Ok((rest, result));
         }
     }
@@ -320,13 +320,13 @@ fn parse_disconnect(input: &[u8]) -> MqttParserResult<&[u8], Disconnect> {
 
 fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<&[u8], Publish> {
     let duplicate = flags & 0b0000_1000 == 0b0000_1000;
-    let qos = match flags & 0b0000_01100 >> 1 {
+    let qos = match flags & 0b0000_0110 >> 1 {
         0u8 => QoS::AtMostOnce,
         1u8 => QoS::AtLeastOnce,
         2u8 => QoS::ExactlyOnce,
         _ => return Err(nom::Err::Failure(MalformedPacket)),
     };
-    let retain = flags & 0b0000_0001 == 0b0000_00001;
+    let retain = (flags & 0b0000_0001) == 0b0000_0001;
 
     let len = input.len();
     let (input, topic_name) = parse_string(input)?;
@@ -411,16 +411,16 @@ fn parse_unsubscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], 
     while remaining_len > 0 {
         let (temp_rest, topic_filter) = parse_string(rest)?;
         topic_filters.push(topic_filter);
-        remaining_len = remaining_len - ((rest.len() - temp_rest.len()) as u32);
+        remaining_len -= (rest.len() - temp_rest.len()) as u32;
         rest = temp_rest;
     }
 
     Ok((
         rest,
         Unsubscribe {
-            packet_identifier: packet_identifier,
+            packet_identifier,
             user_properties: properties.user_property,
-            topic_filters: topic_filters,
+            topic_filters,
         },
     ))
 }
@@ -460,8 +460,8 @@ fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
     Ok((
         input,
         ConnAck {
-            session_present: session_present,
-            connect_reason: connect_reason,
+            session_present,
+            connect_reason,
             session_expiry_interval: properties.session_expiry_interval,
             receive_maximum: properties.receive_maximum,
             maximum_qos: properties.maximum_qos,

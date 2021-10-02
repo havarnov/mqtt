@@ -48,7 +48,7 @@ impl Decoder for MqttPacketDecoder {
 
         println!("{:?}", src);
 
-        match parse_mqtt(&src) {
+        match parse_mqtt(src) {
             Ok((rest, packet)) => {
                 // TODO: fix mutable warning
                 let bytes_to_advance = src.len() - rest.len();

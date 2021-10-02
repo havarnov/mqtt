@@ -33,13 +33,13 @@ fn encode_variable_u32(mut value: u32) -> Vec<u8> {
     let mut res = vec![];
     loop {
         let mut byte: u8 = (value % 128) as u8;
-        value = value / 128;
+        value /= 128;
         if value > 0 {
-            byte = byte | 128;
+            byte |= 128;
         }
         res.push(byte);
 
-        if value <= 0 {
+        if value == 0 {
             break;
         }
     }
@@ -257,7 +257,7 @@ fn encode_connack(connack: &ConnAck) -> Vec<u8> {
 
     let mut variable_header = vec![
         if connack.session_present {
-            0b0000_00001u8
+            0b0000_0001u8
         } else {
             0u8
         },
@@ -281,7 +281,7 @@ fn encode_unsubscribe(unsubscribe: &Unsubscribe) -> Vec<u8> {
     variable_header_and_payload.extend(&encode_properties(&properties));
 
     for topic_filter in unsubscribe.topic_filters.iter() {
-        variable_header_and_payload.extend(&encode_string(&topic_filter));
+        variable_header_and_payload.extend(&encode_string(topic_filter));
     }
 
     let total_len = &encode_variable_u32(variable_header_and_payload.len() as u32);
@@ -423,23 +423,23 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
 
             let mut fst = 0b0011_0000u8;
             if publish.duplicate {
-                fst = fst | 0b0000_1000u8;
+                fst |= 0b0000_1000u8;
             }
 
-            fst = fst
-                | match publish.qos {
+            fst |=
+                match publish.qos {
                     QoS::AtMostOnce => 0u8,
                     QoS::AtLeastOnce => 1u8,
                     QoS::ExactlyOnce => 2u8,
                 };
 
             if publish.retain {
-                fst = fst | 0b0000_0001u8;
+                fst |= 0b0000_0001u8;
             }
 
             let mut result = vec![fst, variable_header_and_payload.len() as u8];
             result.extend_from_slice(&variable_header_and_payload);
-            return result;
+            result
         }
         MqttPacket::SubAck(sub_ack) => {
             let mut variable_header_and_payload = vec![];
@@ -459,7 +459,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
 
             let mut fixed_header = vec![0b1001_0000, variable_header_and_payload.len() as u8];
             fixed_header.extend_from_slice(&variable_header_and_payload);
-            return fixed_header;
+            fixed_header
         }
         MqttPacket::Connect(connect) => encode_connect(connect),
         MqttPacket::Unsubscribe(unsubscribe) => encode_unsubscribe(unsubscribe),
