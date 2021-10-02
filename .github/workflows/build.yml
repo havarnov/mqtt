@@ -1,23 +1,31 @@
 on: [push, pull_request]
 
-name: build & test 
+name: build, test & clippy
 
 jobs:
-  test:
-    name: test
+  main:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
+      - name: checkout sources
         uses: actions/checkout@v2
 
-      - name: Install stable toolchain
+      - name: install stable toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           override: true
 
-      - name: Run cargo test
+      - name: cargo test
         uses: actions-rs/cargo@v1
         with:
           command: test
+
+      - name: add clippy
+        run: rustup component add clippy
+
+      - name: run clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
