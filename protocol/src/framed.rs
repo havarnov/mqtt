@@ -50,7 +50,6 @@ impl Decoder for MqttPacketDecoder {
 
         match parse_mqtt(src) {
             Ok((rest, packet)) => {
-                // TODO: fix mutable warning
                 let bytes_to_advance = src.len() - rest.len();
                 src.advance(bytes_to_advance);
                 Ok(Some(packet))
