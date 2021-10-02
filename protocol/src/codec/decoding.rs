@@ -508,7 +508,7 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_variable_u32, parse_string};
+    use super::{parse_string, parse_variable_u32};
 
     macro_rules! variable_uint_tests {
         ($($name:ident: $value:expr,)*) => {
@@ -566,5 +566,4 @@ mod tests {
         short_string: "🚀",
         longer_string: "🚀longer string with spaces & weird signs ‰{¢‰",
     }
-
 }

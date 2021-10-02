@@ -132,7 +132,11 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     // 23
     if let Some(request_problem_information) = properties.request_problem_information {
         payload.extend(&encode_variable_u32(23));
-        payload.push(if request_problem_information { 1u8 } else { 0u8 });
+        payload.push(if request_problem_information {
+            1u8
+        } else {
+            0u8
+        });
     }
 
     // 24
@@ -144,7 +148,11 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     // 25
     if let Some(request_response_information) = properties.request_response_information {
         payload.extend(&encode_variable_u32(25));
-        payload.push(if request_response_information { 1u8 } else { 0u8 });
+        payload.push(if request_response_information {
+            1u8
+        } else {
+            0u8
+        });
     }
 
     // 26
@@ -248,7 +256,11 @@ fn encode_connack(connack: &ConnAck) -> Vec<u8> {
     };
 
     let mut variable_header = vec![
-        if connack.session_present { 0b0000_00001u8 } else { 0u8},
+        if connack.session_present {
+            0b0000_00001u8
+        } else {
+            0u8
+        },
         encode_connect_reason(&connack.connect_reason),
     ];
     variable_header.extend(&encode_properties(&properties));
@@ -303,7 +315,7 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
             1u8 => connect_flags |= 0b0000_1000u8,
             2u8 => connect_flags |= 0b0001_0000u8,
             0u8 => (),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -319,10 +331,8 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
         0b01010001u8,
         0b01010100u8,
         0b01010100u8,
-
         // Protocol version (5)
         5u8,
-
         // connect flags
         connect_flags,
     ];
@@ -346,7 +356,6 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
     payload.extend(&encode_string(&connect.client_identifier));
 
     if let Some(will) = &connect.will {
-
         println!("{:?}", will);
 
         let will_properties = Properties {
@@ -374,7 +383,9 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
     }
 
     let mut result = vec![0b0001_0000u8];
-    result.extend(&encode_variable_u32((variable_header.len() + payload.len()) as u32));
+    result.extend(&encode_variable_u32(
+        (variable_header.len() + payload.len()) as u32,
+    ));
     result.extend(&variable_header);
     result.extend(&payload);
     result
@@ -387,7 +398,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
         }
         MqttPacket::PingReq => {
             return vec![0b1100_0000u8, 0u8];
-        },
+        }
         MqttPacket::ConnAck(c) => encode_connack(c),
         MqttPacket::Publish(publish) => {
             let mut variable_header_and_payload = vec![];
@@ -429,7 +440,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
             let mut result = vec![fst, variable_header_and_payload.len() as u8];
             result.extend_from_slice(&variable_header_and_payload);
             return result;
-        },
+        }
         MqttPacket::SubAck(sub_ack) => {
             let mut variable_header_and_payload = vec![];
             // TODO encode i16
@@ -449,13 +460,12 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
             let mut fixed_header = vec![0b1001_0000, variable_header_and_payload.len() as u8];
             fixed_header.extend_from_slice(&variable_header_and_payload);
             return fixed_header;
-        },
+        }
         MqttPacket::Connect(connect) => encode_connect(connect),
         MqttPacket::Unsubscribe(unsubscribe) => encode_unsubscribe(unsubscribe),
         _ => unimplemented!("to_bytes"),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -475,13 +485,13 @@ mod tests {
 
     // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901011
     variable_uint_tests! {
-    one_lower: (&[0b0000_0000u8], 0u32),
-    one_upper: (&[0x7fu8], 127u32),
-    two_lower: (&[0x80u8, 0x01u8], 128u32),
-    two_upper: (&[0xffu8, 0x7fu8], 16_383u32),
-    three_lower: (&[0x80u8, 0x80u8, 0x01u8], 16_384u32),
-    three_upper: (&[0xffu8, 0xffu8, 0x7fu8], 2_097_151u32),
-    four_lower: (&[0x80u8, 0x80u8, 0x80u8, 0x01u8], 2_097_152u32),
-    four_upper: (&[0xffu8, 0xffu8, 0xffu8, 0x07fu8], 268_435_455u32),
-}
+        one_lower: (&[0b0000_0000u8], 0u32),
+        one_upper: (&[0x7fu8], 127u32),
+        two_lower: (&[0x80u8, 0x01u8], 128u32),
+        two_upper: (&[0xffu8, 0x7fu8], 16_383u32),
+        three_lower: (&[0x80u8, 0x80u8, 0x01u8], 16_384u32),
+        three_upper: (&[0xffu8, 0xffu8, 0x7fu8], 2_097_151u32),
+        four_lower: (&[0x80u8, 0x80u8, 0x80u8, 0x01u8], 2_097_152u32),
+        four_upper: (&[0xffu8, 0xffu8, 0xffu8, 0x07fu8], 268_435_455u32),
+    }
 }
