@@ -1,6 +1,6 @@
 use crate::types::{
-    ConnAck, Connect, ConnectReason, MqttPacket, Properties, QoS, Subscribe, SubscribeReason,
-    Unsubscribe,
+    ConnAck, Connect, ConnectReason, MqttPacket, Properties, Publish, QoS, Subscribe,
+    SubscribeReason, Unsubscribe,
 };
 
 fn encode_connect_reason(reason: &ConnectReason) -> u8 {
@@ -335,6 +335,53 @@ fn encode_unsubscribe(unsubscribe: &Unsubscribe) -> Vec<u8> {
     result
 }
 
+fn encode_publish(publish: &Publish) -> Vec<u8> {
+    let mut first_byte = 0b0011_0000u8;
+
+    if publish.duplicate {
+        first_byte |= 0b0000_1000u8;
+    }
+
+    first_byte |= match publish.qos {
+        QoS::AtMostOnce => 0u8,
+        QoS::AtLeastOnce => 1u8 << 1,
+        QoS::ExactlyOnce => 2u8 << 1,
+    };
+
+    if publish.retain {
+        first_byte |= 0b0000_0001u8;
+    }
+
+    let mut variable_header_and_payload = Vec::new();
+    variable_header_and_payload.extend(encode_string(&publish.topic_name));
+    if let Some(packet_identifier) = publish.packet_identifier {
+        variable_header_and_payload.extend(packet_identifier.to_be_bytes());
+    }
+
+    let properties = Properties {
+        payload_format_indicator: publish.payload_format_indicator,
+        message_expiry_interval: publish.message_expiry_interval,
+        topic_alias: publish.topic_alias,
+        response_topic: publish.response_topic.to_owned(),
+        correlation_data: publish.correlation_data.to_owned(),
+        user_property: publish.user_properties.to_owned(),
+        subscription_identifier: publish.subscription_identifier,
+        content_type: publish.content_type.to_owned(),
+        ..Default::default()
+    };
+    variable_header_and_payload.extend(&encode_properties(&properties));
+
+    variable_header_and_payload.extend(&publish.payload);
+
+    let packet_length = encode_variable_u32(variable_header_and_payload.len() as u32);
+    let mut result =
+        Vec::with_capacity(variable_header_and_payload.len() + packet_length.len() + 1);
+    result.push(first_byte);
+    result.extend(packet_length);
+    result.extend(variable_header_and_payload);
+    result
+}
+
 fn encode_connect(connect: &Connect) -> Vec<u8> {
     let mut connect_flags = 0u8;
 
@@ -442,46 +489,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
             return vec![0b1100_0000u8, 0u8];
         }
         MqttPacket::ConnAck(c) => encode_connack(c),
-        MqttPacket::Publish(publish) => {
-            let mut variable_header_and_payload = vec![];
-
-            let topic_name = publish.topic_name.as_bytes();
-            let topic_name_len = topic_name.len() as u8;
-            variable_header_and_payload.push(0u8);
-            variable_header_and_payload.push(topic_name_len);
-            variable_header_and_payload.extend_from_slice(topic_name);
-
-            if let Some(packet_identifier) = publish.packet_identifier {
-                variable_header_and_payload.push(0u8);
-                variable_header_and_payload.push(packet_identifier as u8);
-            }
-
-            // TODO: properties
-            // empty properties
-            variable_header_and_payload.push(0u8);
-
-            // payload
-            variable_header_and_payload.extend_from_slice(&publish.payload);
-
-            let mut fst = 0b0011_0000u8;
-            if publish.duplicate {
-                fst |= 0b0000_1000u8;
-            }
-
-            fst |= match publish.qos {
-                QoS::AtMostOnce => 0u8,
-                QoS::AtLeastOnce => 1u8,
-                QoS::ExactlyOnce => 2u8,
-            };
-
-            if publish.retain {
-                fst |= 0b0000_0001u8;
-            }
-
-            let mut result = vec![fst, variable_header_and_payload.len() as u8];
-            result.extend_from_slice(&variable_header_and_payload);
-            result
-        }
+        MqttPacket::Publish(publish) => encode_publish(publish),
         MqttPacket::Subscribe(subscribe) => encode_subscribe(subscribe),
         MqttPacket::SubAck(sub_ack) => {
             let mut variable_header_and_payload = vec![];

@@ -214,7 +214,16 @@ pub struct Publish {
     pub retain: bool,
     pub topic_name: String,
     pub packet_identifier: Option<u16>,
-    pub properties: Properties,
+    // properties
+    pub payload_format_indicator: Option<u8>,
+    pub message_expiry_interval: Option<u32>,
+    pub topic_alias: Option<u16>,
+    pub response_topic: Option<String>,
+    pub correlation_data: Option<Vec<u8>>,
+    pub user_properties: Option<Vec<UserProperty>>,
+    pub subscription_identifier: Option<u32>,
+    pub content_type: Option<String>,
+    // actual payload
     pub payload: Vec<u8>,
 }
 

@@ -2,7 +2,8 @@ use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
 use crate::types::{
-    ConnAck, Connect, ConnectReason, MqttPacket, QoS, Subscribe, TopicFilter, Unsubscribe, Will,
+    ConnAck, Connect, ConnectReason, MqttPacket, Publish, QoS, Subscribe, TopicFilter, Unsubscribe,
+    Will,
 };
 
 macro_rules! packet_tests {
@@ -270,6 +271,41 @@ packet_tests! {
             user_properties: None,
             topic_filters: vec!["foobar".to_string()]
         })
+    ),
+
+    publish: (
+        &[
+            // -- Fixed header --
+            0b0011_1011u8,
+            14u8, // packet length
+
+            // -- Variable header --
+            // topic name (foobar)
+            0u8, 6u8, 0x66, 0x6F, 0x6F, 0x62, 0x61, 0x72,
+            // packet identifier
+            0u8, 42u8,
+            // Properties
+            0u8, // property length
+
+            // -- Payload --
+            1u8, 3u8, 5u8,
+        ],
+        MqttPacket::Publish(Publish {
+            duplicate: true,
+            qos: QoS::AtLeastOnce,
+            retain: true,
+            topic_name: "foobar".to_string(),
+            packet_identifier: Some(42u16),
+            payload_format_indicator: None,
+            message_expiry_interval: None,
+            topic_alias: None,
+            response_topic: None,
+            correlation_data: None,
+            user_properties: None,
+            subscription_identifier: None,
+            content_type: None,
+            payload: vec![1u8, 3u8, 5u8],
+        }),
     ),
 
 }

@@ -334,7 +334,7 @@ fn parse_disconnect(input: &[u8]) -> MqttParserResult<&[u8], Disconnect> {
 
 fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<&[u8], Publish> {
     let duplicate = flags & 0b0000_1000 == 0b0000_1000;
-    let qos = match flags & 0b0000_0110 >> 1 {
+    let qos = match (flags & 0b0000_0110) >> 1 {
         0u8 => QoS::AtMostOnce,
         1u8 => QoS::AtLeastOnce,
         2u8 => QoS::ExactlyOnce,
@@ -360,7 +360,16 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
             retain,
             topic_name,
             packet_identifier,
-            properties,
+            // properties
+            payload_format_indicator: properties.payload_format_indicator,
+            message_expiry_interval: properties.message_expiry_interval,
+            topic_alias: properties.topic_alias,
+            response_topic: properties.response_topic,
+            correlation_data: properties.correlation_data,
+            user_properties: properties.user_property,
+            subscription_identifier: properties.subscription_identifier,
+            content_type: properties.content_type,
+            // payload
             payload: payload.to_vec(),
         },
     ))
