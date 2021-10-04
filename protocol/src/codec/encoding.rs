@@ -1,6 +1,6 @@
 use crate::types::{
-    ConnAck, Connect, ConnectReason, MqttPacket, Properties, Publish, QoS, SubAck, Subscribe,
-    SubscribeReason, Unsubscribe,
+    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
+    QoS, SubAck, Subscribe, SubscribeReason, Unsubscribe,
 };
 
 fn encode_connect_reason(reason: &ConnectReason) -> u8 {
@@ -240,6 +240,29 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     let mut res = encode_variable_u32(payload.len() as u32);
     res.extend(&payload);
     res
+}
+
+fn encode_disconnect(disconnect: &Disconnect) -> Vec<u8> {
+    let mut variable_header_and_payload = vec![match disconnect.disconnect_reason {
+        DisconnectReason::NormalDisconnection => 0u8,
+    }];
+
+    let properties = Properties {
+        session_expiry_interval: disconnect.session_expiry_interval,
+        reason_string: disconnect.reason_string.to_owned(),
+        user_property: disconnect.user_properties.to_owned(),
+        server_reference: disconnect.server_reference.to_owned(),
+        ..Default::default()
+    };
+    variable_header_and_payload.extend(&encode_properties(&properties));
+
+    let total_len = &encode_variable_u32(variable_header_and_payload.len() as u32);
+    let mut result = Vec::with_capacity(variable_header_and_payload.len() + total_len.len() + 1);
+    result.push(0b1110_0000);
+    result.extend(total_len);
+    result.extend(&variable_header_and_payload);
+
+    result
 }
 
 fn encode_connack(connack: &ConnAck) -> Vec<u8> {
@@ -518,6 +541,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
         MqttPacket::SubAck(suback) => encode_suback(suback),
         MqttPacket::Connect(connect) => encode_connect(connect),
         MqttPacket::Unsubscribe(unsubscribe) => encode_unsubscribe(unsubscribe),
+        MqttPacket::Disconnect(disconnect) => encode_disconnect(disconnect),
         _ => unimplemented!("to_bytes"),
     }
 }

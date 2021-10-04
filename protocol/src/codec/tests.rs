@@ -2,8 +2,8 @@ use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
 use crate::types::{
-    ConnAck, Connect, ConnectReason, MqttPacket, Publish, QoS, SubAck, Subscribe, SubscribeReason,
-    TopicFilter, Unsubscribe, Will,
+    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
+    SubAck, Subscribe, SubscribeReason, TopicFilter, Unsubscribe, Will,
 };
 
 macro_rules! packet_tests {
@@ -330,6 +330,27 @@ packet_tests! {
             reason_string: Some("no reason".to_string()),
             user_properties: None,
             reasons: vec![SubscribeReason::GrantedQoS0],
+        }),
+    ),
+
+    disconnect: (
+        &[
+            // -- Fixed header --
+            0b1110_0000u8,
+            2u8, // packet length
+
+            // -- Variable header --
+            // disconnect reason code
+            0u8,
+            // Properties
+            0u8, // property length
+        ],
+        MqttPacket::Disconnect(Disconnect {
+            disconnect_reason: DisconnectReason::NormalDisconnection,
+            session_expiry_interval: None,
+            reason_string: None,
+            user_properties: None,
+            server_reference: None,
         }),
     ),
 }

@@ -328,7 +328,10 @@ fn parse_disconnect(input: &[u8]) -> MqttParserResult<&[u8], Disconnect> {
         input,
         Disconnect {
             disconnect_reason,
-            properties,
+            session_expiry_interval: properties.session_expiry_interval,
+            reason_string: properties.reason_string,
+            user_properties: properties.user_property,
+            server_reference: properties.server_reference,
         },
     ))
 }

@@ -197,7 +197,11 @@ pub enum DisconnectReason {
 #[derive(Debug, PartialEq)]
 pub struct Disconnect {
     pub disconnect_reason: DisconnectReason,
-    pub properties: Properties,
+    // properties
+    pub session_expiry_interval: Option<u32>,
+    pub reason_string: Option<String>,
+    pub user_properties: Option<Vec<UserProperty>>,
+    pub server_reference: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
