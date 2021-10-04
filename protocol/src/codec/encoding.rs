@@ -1,6 +1,6 @@
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
-    QoS, SubAck, Subscribe, SubscribeReason, Unsubscribe,
+    QoS, SubAck, Subscribe, SubscribeReason, UnsubAck, Unsubscribe, UnsubscribeReason,
 };
 
 fn encode_connect_reason(reason: &ConnectReason) -> u8 {
@@ -240,6 +240,36 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     let mut res = encode_variable_u32(payload.len() as u32);
     res.extend(&payload);
     res
+}
+
+fn encode_unsuback(unsuback: &UnsubAck) -> Vec<u8> {
+    let mut variable_header_and_payload = vec![];
+    variable_header_and_payload.extend(unsuback.packet_identifier.to_be_bytes());
+
+    let properties = Properties {
+        reason_string: unsuback.reason_string.to_owned(),
+        user_property: unsuback.user_properties.to_owned(),
+        ..Default::default()
+    };
+    variable_header_and_payload.extend(&encode_properties(&properties));
+
+    variable_header_and_payload.extend(unsuback.reasons.iter().map(|i| match i {
+        UnsubscribeReason::Success => 0u8,
+        UnsubscribeReason::NoSubscriptionExisted => 17u8,
+        UnsubscribeReason::UnspecifiedError => 128u8,
+        UnsubscribeReason::ImplementationSpecificError => 131u8,
+        UnsubscribeReason::NotAuthorized => 135u8,
+        UnsubscribeReason::TopicFilterInvalid => 143u8,
+        UnsubscribeReason::PacketIdentifierInUse => 145u8,
+    }));
+
+    let total_len = &encode_variable_u32(variable_header_and_payload.len() as u32);
+    let mut result = Vec::with_capacity(variable_header_and_payload.len() + total_len.len() + 1);
+    result.push(0b1011_0000);
+    result.extend(total_len);
+    result.extend(&variable_header_and_payload);
+
+    result
 }
 
 fn encode_disconnect(disconnect: &Disconnect) -> Vec<u8> {
@@ -541,6 +571,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
         MqttPacket::SubAck(suback) => encode_suback(suback),
         MqttPacket::Connect(connect) => encode_connect(connect),
         MqttPacket::Unsubscribe(unsubscribe) => encode_unsubscribe(unsubscribe),
+        MqttPacket::UnsubAck(unsuback) => encode_unsuback(unsuback),
         MqttPacket::Disconnect(disconnect) => encode_disconnect(disconnect),
         _ => unimplemented!("to_bytes"),
     }

@@ -10,7 +10,7 @@ pub enum MqttPacket {
     Subscribe(Subscribe),
     SubAck(SubAck),
     Unsubscribe(Unsubscribe),
-    UnsubAck, // TODO: impl decode/encode
+    UnsubAck(UnsubAck),
     PingReq,
     PingResp,
     Disconnect(Disconnect),
@@ -247,6 +247,25 @@ pub struct Subscribe {
     pub subscription_identifier: Option<u32>,
     pub user_properties: Option<Vec<UserProperty>>,
     pub topic_filters: Vec<TopicFilter>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum UnsubscribeReason {
+    Success,
+    NoSubscriptionExisted,
+    UnspecifiedError,
+    ImplementationSpecificError,
+    NotAuthorized,
+    TopicFilterInvalid,
+    PacketIdentifierInUse,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct UnsubAck {
+    pub packet_identifier: u16,
+    pub reason_string: Option<String>,
+    pub user_properties: Option<Vec<UserProperty>>,
+    pub reasons: Vec<UnsubscribeReason>,
 }
 
 #[derive(Debug, PartialEq)]

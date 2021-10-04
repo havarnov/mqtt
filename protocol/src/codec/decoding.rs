@@ -1,7 +1,8 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
-    QoS, SubAck, Subscribe, SubscribeReason, TopicFilter, Unsubscribe, UserProperty, Will,
+    QoS, SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe, UnsubscribeReason,
+    UserProperty, Will,
 };
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
@@ -429,6 +430,43 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
     ))
 }
 
+fn parse_unsuback(packet_size: u32, rest: &[u8]) -> MqttParserResult<&[u8], UnsubAck> {
+    let len = rest.len();
+    let (rest, packet_identifier) = u16(Endianness::Big)(rest)?;
+    let (rest, properties) = parse_properties(rest)?;
+
+    let variable_header_len = len - rest.len();
+    let remaining_len = packet_size - (variable_header_len as u32);
+    if remaining_len == 0 {
+        return Err(nom::Err::Failure(MalformedPacket));
+    }
+
+    let (rest, payload) = take(remaining_len)(rest)?;
+    let reasons = payload
+        .iter()
+        .map(|i| match i {
+            0u8 => Ok(UnsubscribeReason::Success),
+            17u8 => Ok(UnsubscribeReason::NoSubscriptionExisted),
+            128u8 => Ok(UnsubscribeReason::UnspecifiedError),
+            131u8 => Ok(UnsubscribeReason::ImplementationSpecificError),
+            135u8 => Ok(UnsubscribeReason::NotAuthorized),
+            143u8 => Ok(UnsubscribeReason::TopicFilterInvalid),
+            145u8 => Ok(UnsubscribeReason::PacketIdentifierInUse),
+            _ => Err(nom::Err::Failure(MalformedPacket)),
+        })
+        .collect::<Result<Vec<UnsubscribeReason>, _>>()?;
+
+    Ok((
+        rest,
+        UnsubAck {
+            packet_identifier,
+            reason_string: properties.reason_string.to_owned(),
+            user_properties: properties.user_property,
+            reasons,
+        },
+    ))
+}
+
 fn parse_unsubscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Unsubscribe> {
     let len = input.len();
     let (rest, packet_identifier) = u16(Endianness::Big)(input)?;
@@ -550,6 +588,8 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
             .map(|(r, suback)| (r, MqttPacket::SubAck(suback))),
         10u8 => parse_unsubscribe(header.packet_size, rest)
             .map(|(r, unsubscribe)| (r, MqttPacket::Unsubscribe(unsubscribe))),
+        11u8 => parse_unsuback(header.packet_size, rest)
+            .map(|(r, unsuback)| (r, MqttPacket::UnsubAck(unsuback))),
         12u8 => {
             if header.flags != 0u8 {
                 Err(nom::Err::Failure(MalformedPacket))

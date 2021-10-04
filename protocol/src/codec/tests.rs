@@ -3,7 +3,8 @@ use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
-    SubAck, Subscribe, SubscribeReason, TopicFilter, Unsubscribe, Will,
+    SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe, UnsubscribeReason,
+    Will,
 };
 
 macro_rules! packet_tests {
@@ -352,6 +353,29 @@ packet_tests! {
             user_properties: None,
             server_reference: None,
         }),
+    ),
+
+    unsuback: (
+        &[
+            // -- Fixed header --
+            0b1011_0000u8,
+            4u8, // packet length
+
+            // -- Variable header --
+            // packet identifier
+            0u8, 42u8,
+            // Properties
+            0u8, // property length
+
+            // -- Payload --
+            0u8
+        ],
+        MqttPacket::UnsubAck(UnsubAck {
+            packet_identifier: 42u16,
+            reason_string: None,
+            user_properties: None,
+            reasons: vec![UnsubscribeReason::Success],
+        })
     ),
 }
 
