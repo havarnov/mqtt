@@ -254,7 +254,10 @@ pub enum SubscribeReason {
 #[derive(Debug, PartialEq)]
 pub struct SubAck {
     pub packet_identifier: u16,
-    pub properties: Properties,
+    // properties
+    pub reason_string: Option<String>,
+    pub user_properties: Option<Vec<UserProperty>>,
+    // payload
     pub reasons: Vec<SubscribeReason>,
 }
 

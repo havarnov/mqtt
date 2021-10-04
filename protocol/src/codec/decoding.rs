@@ -1,7 +1,7 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
-    QoS, Subscribe, TopicFilter, Unsubscribe, UserProperty, Will,
+    QoS, SubAck, Subscribe, SubscribeReason, TopicFilter, Unsubscribe, UserProperty, Will,
 };
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
@@ -186,6 +186,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
                 &mut props.request_response_information,
                 map_parser(take(1usize), parse_u8_as_bool)(rest_next)?,
             ),
+            31u32 => map_to_property(&mut props.reason_string, parse_string(rest_next)?),
             33u32 => map_to_property(&mut props.receive_maximum, u16(Endianness::Big)(rest_next)?),
             34u32 => map_to_property(
                 &mut props.topic_alias_maximum,
@@ -454,6 +455,34 @@ fn parse_unsubscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], 
     ))
 }
 
+fn parse_suback(packet_size: u32, rest: &[u8]) -> MqttParserResult<&[u8], SubAck> {
+    let rest_len = rest.len();
+    let (rest, packet_identifier) = u16(Endianness::Big)(rest)?;
+    let (rest, properties) = parse_properties(rest)?;
+
+    let remaining_len = packet_size - ((rest_len - rest.len()) as u32);
+
+    let (rest, remaining) = take(remaining_len)(rest)?;
+
+    let reasons: Vec<SubscribeReason> = remaining
+        .iter()
+        .map(|i| match i {
+            0u8 => Ok(SubscribeReason::GrantedQoS0),
+            _ => Err(nom::Err::Failure(MalformedPacket)),
+        })
+        .collect::<Result<Vec<SubscribeReason>, _>>()?;
+
+    Ok((
+        rest,
+        SubAck {
+            packet_identifier,
+            reason_string: properties.reason_string,
+            user_properties: properties.user_property,
+            reasons,
+        },
+    ))
+}
+
 fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
     let (input, connect_acknowledge_flags) = take(1usize)(input)?;
     let session_present = connect_acknowledge_flags[0] & 0b0000_0001 == 1;
@@ -514,6 +543,8 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
             .map(|(r, publish)| (r, MqttPacket::Publish(publish))),
         8u8 => parse_subscribe(header.packet_size, rest)
             .map(|(r, subscribe)| (r, MqttPacket::Subscribe(subscribe))),
+        9u8 => parse_suback(header.packet_size, rest)
+            .map(|(r, suback)| (r, MqttPacket::SubAck(suback))),
         10u8 => parse_unsubscribe(header.packet_size, rest)
             .map(|(r, unsubscribe)| (r, MqttPacket::Unsubscribe(unsubscribe))),
         12u8 => {

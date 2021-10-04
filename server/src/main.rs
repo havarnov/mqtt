@@ -75,7 +75,8 @@ async fn process(
                 framed
                     .send(MqttPacket::SubAck(SubAck {
                         packet_identifier: subscribe.packet_identifier,
-                        properties: Default::default(),
+                        reason_string: None,
+                        user_properties: None,
                         reasons: vec![SubscribeReason::GrantedQoS0],
                     }))
                     .await?;

@@ -2,8 +2,8 @@ use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
 use crate::types::{
-    ConnAck, Connect, ConnectReason, MqttPacket, Publish, QoS, Subscribe, TopicFilter, Unsubscribe,
-    Will,
+    ConnAck, Connect, ConnectReason, MqttPacket, Publish, QoS, SubAck, Subscribe, SubscribeReason,
+    TopicFilter, Unsubscribe, Will,
 };
 
 macro_rules! packet_tests {
@@ -308,6 +308,30 @@ packet_tests! {
         }),
     ),
 
+    suback: (
+        &[
+            // -- Fixed header --
+            0b1001_0000u8,
+            16u8, // packet length
+
+            // -- Variable header --
+            // packet identifier
+            0u8, 42u8,
+            // Properties
+            12u8, // property length
+            0x1f, // reason string identifier
+            0u8, 9u8, 0x6e, 0x6f, 0x20, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e,
+
+            // -- Payload --
+            0u8,
+        ],
+        MqttPacket::SubAck(SubAck {
+            packet_identifier: 42u16,
+            reason_string: Some("no reason".to_string()),
+            user_properties: None,
+            reasons: vec![SubscribeReason::GrantedQoS0],
+        }),
+    ),
 }
 
 macro_rules! parsing_should_fail_tests {

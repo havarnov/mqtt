@@ -1,5 +1,5 @@
 use crate::types::{
-    ConnAck, Connect, ConnectReason, MqttPacket, Properties, Publish, QoS, Subscribe,
+    ConnAck, Connect, ConnectReason, MqttPacket, Properties, Publish, QoS, SubAck, Subscribe,
     SubscribeReason, Unsubscribe,
 };
 
@@ -335,6 +335,30 @@ fn encode_unsubscribe(unsubscribe: &Unsubscribe) -> Vec<u8> {
     result
 }
 
+fn encode_suback(suback: &SubAck) -> Vec<u8> {
+    let mut variable_header_and_payload = Vec::new();
+    variable_header_and_payload.extend(suback.packet_identifier.to_be_bytes());
+
+    let properties = Properties {
+        reason_string: suback.reason_string.to_owned(),
+        user_property: suback.user_properties.to_owned(),
+        ..Default::default()
+    };
+    variable_header_and_payload.extend(&encode_properties(&properties));
+
+    variable_header_and_payload.extend(suback.reasons.iter().map(|i| match i {
+        SubscribeReason::GrantedQoS0 => 0u8,
+    }));
+
+    let total_len = &encode_variable_u32(variable_header_and_payload.len() as u32);
+    let mut result = Vec::with_capacity(variable_header_and_payload.len() + total_len.len() + 1);
+    result.push(0b1001_0000);
+    result.extend(total_len);
+    result.extend(&variable_header_and_payload);
+
+    result
+}
+
 fn encode_publish(publish: &Publish) -> Vec<u8> {
     let mut first_byte = 0b0011_0000u8;
 
@@ -491,26 +515,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
         MqttPacket::ConnAck(c) => encode_connack(c),
         MqttPacket::Publish(publish) => encode_publish(publish),
         MqttPacket::Subscribe(subscribe) => encode_subscribe(subscribe),
-        MqttPacket::SubAck(sub_ack) => {
-            let mut variable_header_and_payload = vec![];
-            // TODO encode i16
-            let pi = sub_ack.packet_identifier as u8;
-            variable_header_and_payload.push(pi);
-
-            // TODO: properties
-            // empty properties
-            variable_header_and_payload.push(0u8);
-
-            for reason in sub_ack.reasons.iter() {
-                variable_header_and_payload.push(match reason {
-                    SubscribeReason::GrantedQoS0 => 0u8,
-                });
-            }
-
-            let mut fixed_header = vec![0b1001_0000, variable_header_and_payload.len() as u8];
-            fixed_header.extend_from_slice(&variable_header_and_payload);
-            fixed_header
-        }
+        MqttPacket::SubAck(suback) => encode_suback(suback),
         MqttPacket::Connect(connect) => encode_connect(connect),
         MqttPacket::Unsubscribe(unsubscribe) => encode_unsubscribe(unsubscribe),
         _ => unimplemented!("to_bytes"),
