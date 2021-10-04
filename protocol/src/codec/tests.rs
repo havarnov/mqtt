@@ -1,7 +1,9 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
-use crate::types::{ConnAck, Connect, ConnectReason, MqttPacket, Unsubscribe, Will};
+use crate::types::{
+    ConnAck, Connect, ConnectReason, MqttPacket, QoS, Subscribe, TopicFilter, Unsubscribe, Will,
+};
 
 macro_rules! packet_tests {
     ($($name:ident: $value:expr,)*) => {
@@ -193,6 +195,55 @@ packet_tests! {
             reason_string: None,
             user_properties: None,
         })
+    ),
+
+    subscribe : (
+        &[
+            // -- Fixed header --
+            0b1000_0010u8,
+            21u8, // packet length
+
+            // -- Variable header --
+            // Packet identifier
+            0u8,
+            1u8,
+            // No user properties
+            // Properties
+            2u8, // property length
+            11u8, // subscription identifier property identifier
+            2u8, // subscription identifier
+
+            // -- Payload --
+            // (1 or multiple topic filter names as ut8 strings + 1 option byte)
+            // foobar
+            0u8, 6u8, 0x66, 0x6F, 0x6F, 0x62, 0x61, 0x72,
+            0b0000_0100,
+
+            // rall
+            0u8, 4u8, 0x72, 0x61, 0x6C, 0x6C,
+            0b0001_1010,
+        ],
+        MqttPacket::Subscribe(Subscribe {
+            packet_identifier: 1u16,
+            subscription_identifier: Some(2u32),
+            user_properties: None,
+            topic_filters: vec![
+                TopicFilter {
+                    topic_name: "foobar".to_string(),
+                    maximum_qos: QoS::AtMostOnce,
+                    no_local: true,
+                    retain_handling: 0u8,
+                    retain_as_published: false,
+                },
+                TopicFilter {
+                    topic_name: "rall".to_string(),
+                    maximum_qos: QoS::ExactlyOnce,
+                    no_local: false,
+                    retain_handling: 1u8,
+                    retain_as_published: true,
+                },
+            ]
+        }),
     ),
 
     unsubscribe: (

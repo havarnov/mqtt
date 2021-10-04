@@ -231,7 +231,8 @@ pub struct TopicFilter {
 #[derive(Debug, PartialEq)]
 pub struct Subscribe {
     pub packet_identifier: u16,
-    pub properties: Properties,
+    pub subscription_identifier: Option<u32>,
+    pub user_properties: Option<Vec<UserProperty>>,
     pub topic_filters: Vec<TopicFilter>,
 }
 

@@ -11,7 +11,8 @@ use nom::error::Error;
 use nom::number::streaming::{u16, u32};
 use nom::number::Endianness;
 use nom::sequence::tuple;
-use nom::IResult;
+use nom::{IResult, Needed};
+use std::num::NonZeroUsize;
 use std::str;
 
 #[derive(Debug, PartialEq)]
@@ -94,6 +95,13 @@ pub(in crate::codec) fn parse_header(input: &[u8]) -> MqttParserResult<&[u8], Mq
 
     let (rest, packet_size) = parse_variable_u32(rest)?;
 
+    if packet_size > rest.len() as u32 {
+        return Err(nom::Err::Incomplete(Needed::Size(
+            NonZeroUsize::new((packet_size as usize) - rest.len())
+                .expect("packet_size should be larger than rest.len()."),
+        )));
+    }
+
     Ok((
         rest,
         MqttHeader {
@@ -149,6 +157,10 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
                 &mut props.correlation_data,
                 map(parse_binary_data, |b| b.to_vec())(rest_next)?,
             ),
+            11u32 => map_to_property(
+                &mut props.subscription_identifier,
+                parse_variable_u32(rest_next)?,
+            ),
             17u32 => map_to_property(
                 &mut props.session_expiry_interval,
                 u32(Endianness::Big)(rest_next)?,
@@ -199,6 +211,8 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
                 Err(nom::Err::Failure(MalformedPacket))
             }
         }?;
+
+        // TODO: check length for overflow (malformed packet)
         properties_length -= (input.len() - rest_next.len()) as u32;
         input = rest_next;
     }
@@ -363,16 +377,16 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
         let (input_tmp, topic_name) = parse_string(input)?;
         let (input_tmp, options) = take(1usize)(input_tmp)?;
 
-        let maximum_qos = match options[0] & 0b0000_0011 {
+        let maximum_qos = match options[0] & 0b0000_0011u8 {
             0u8 => QoS::AtMostOnce,
             1u8 => QoS::AtLeastOnce,
             2u8 => QoS::ExactlyOnce,
             _ => return Err(nom::Err::Failure(MalformedPacket)),
         };
 
-        let no_local = options[0] & 0b0000_0100 == 0b0000_0100;
-        let retain_as_published = options[0] & 0b0000_1000 == 0b0000_1000;
-        let retain_handling = options[0] & 0b0011_0000 >> 4;
+        let no_local = options[0] & 0b0000_0100u8 == 0b0000_0100;
+        let retain_as_published = options[0] & 0b0000_1000u8 == 0b0000_1000;
+        let retain_handling = (options[0] & 0b0011_0000u8) >> 4;
 
         topic_filters.push(TopicFilter {
             topic_name,
@@ -383,6 +397,11 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
         });
 
         input = input_tmp;
+        let advance = (len - input.len()) as u32;
+        if advance > remaining {
+            return Err(nom::Err::Failure(MalformedPacket));
+        }
+
         remaining -= (len - input.len()) as u32;
     }
 
@@ -390,7 +409,8 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
         input,
         Subscribe {
             packet_identifier,
-            properties,
+            subscription_identifier: properties.subscription_identifier,
+            user_properties: properties.user_property,
             topic_filters,
         },
     ))

@@ -1,5 +1,6 @@
 use crate::types::{
-    ConnAck, Connect, ConnectReason, MqttPacket, Properties, QoS, SubscribeReason, Unsubscribe,
+    ConnAck, Connect, ConnectReason, MqttPacket, Properties, QoS, Subscribe, SubscribeReason,
+    Unsubscribe,
 };
 
 fn encode_connect_reason(reason: &ConnectReason) -> u8 {
@@ -96,7 +97,7 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     // 11
     if let Some(subscription_identifier) = properties.subscription_identifier {
         payload.extend(&encode_variable_u32(11));
-        payload.extend(&subscription_identifier.to_be_bytes());
+        payload.extend(&encode_variable_u32(subscription_identifier));
     }
 
     // 17
@@ -271,6 +272,47 @@ fn encode_connack(connack: &ConnAck) -> Vec<u8> {
     result
 }
 
+fn encode_subscribe(subscribe: &Subscribe) -> Vec<u8> {
+    let mut variable_header_and_payload = vec![];
+    variable_header_and_payload.extend(subscribe.packet_identifier.to_be_bytes());
+    let properties = Properties {
+        subscription_identifier: subscribe.subscription_identifier,
+        user_property: subscribe.user_properties.to_owned(),
+        ..Default::default()
+    };
+    variable_header_and_payload.extend(&encode_properties(&properties));
+
+    for topic_filter in subscribe.topic_filters.iter() {
+        variable_header_and_payload.extend(&encode_string(&topic_filter.topic_name));
+        let mut options_byte = 0u8;
+        options_byte |= topic_filter.retain_handling << 4;
+        options_byte |= if topic_filter.retain_as_published {
+            0b0000_1000u8
+        } else {
+            0u8
+        };
+        options_byte |= if topic_filter.no_local {
+            0b0000_0100u8
+        } else {
+            0u8
+        };
+        options_byte |= match topic_filter.maximum_qos {
+            QoS::AtMostOnce => 0u8,
+            QoS::AtLeastOnce => 1u8,
+            QoS::ExactlyOnce => 2u8,
+        };
+        variable_header_and_payload.push(options_byte);
+    }
+
+    let total_len = &encode_variable_u32(variable_header_and_payload.len() as u32);
+    let mut result = Vec::with_capacity(variable_header_and_payload.len() + total_len.len());
+    result.push(0b1000_0010);
+    result.extend(total_len);
+    result.extend(&variable_header_and_payload);
+
+    result
+}
+
 fn encode_unsubscribe(unsubscribe: &Unsubscribe) -> Vec<u8> {
     let mut variable_header_and_payload = vec![];
     variable_header_and_payload.extend(unsubscribe.packet_identifier.to_be_bytes());
@@ -426,12 +468,11 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
                 fst |= 0b0000_1000u8;
             }
 
-            fst |=
-                match publish.qos {
-                    QoS::AtMostOnce => 0u8,
-                    QoS::AtLeastOnce => 1u8,
-                    QoS::ExactlyOnce => 2u8,
-                };
+            fst |= match publish.qos {
+                QoS::AtMostOnce => 0u8,
+                QoS::AtLeastOnce => 1u8,
+                QoS::ExactlyOnce => 2u8,
+            };
 
             if publish.retain {
                 fst |= 0b0000_0001u8;
@@ -441,6 +482,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
             result.extend_from_slice(&variable_header_and_payload);
             result
         }
+        MqttPacket::Subscribe(subscribe) => encode_subscribe(subscribe),
         MqttPacket::SubAck(sub_ack) => {
             let mut variable_header_and_payload = vec![];
             // TODO encode i16
