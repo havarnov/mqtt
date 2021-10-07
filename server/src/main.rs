@@ -1,73 +1,75 @@
-use std::collections::HashMap;
+use async_trait::async_trait;
 use futures::SinkExt;
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::ops::Deref;
+use std::sync::Arc;
 use std::time::Duration;
-use async_trait::async_trait;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
-use tokio::sync::oneshot::{Receiver, Sender};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
 use mqtt_protocol::framed::MqttPacketDecoder;
-use mqtt_protocol::types::{ConnAck, ConnectReason, MqttPacket, SubAck, SubscribeReason};
+use mqtt_protocol::types::{
+    ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, SubAck, SubscribeReason,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let (tx, rx) = unbounded_channel();
-    tokio::try_join!(connect_handler(rx), listener(tx)).map(|_| ())
+    let broker = Arc::new(StandardBroker {
+        clients: RwLock::new(HashMap::new()),
+    });
+    listener(broker.clone()).await
 }
 
 #[async_trait]
 trait Broker {
-    async fn incoming_connect(self: &Self, packet_identifier: u16) -> oneshot::Receiver<()>;
+    async fn incoming_connect(
+        &self,
+        client_identifier: &str,
+    ) -> oneshot::Receiver<oneshot::Sender<()>>;
 }
 
 struct StandardBroker {
-    clients: RwLock<HashMap<u16, oneshot::Sender<()>>>,
+    clients: RwLock<HashMap<String, oneshot::Sender<oneshot::Sender<()>>>>,
 }
 
 #[async_trait]
 impl Broker for StandardBroker {
-    async fn incoming_connect(self: &Self, packet_identifier: u16) -> Receiver<()> {
-        let mut clients = self.clients.write().expect("Read lock on clients");
+    #[allow(clippy::async_yields_async)]
+    async fn incoming_connect(
+        &self,
+        client_identifier: &str,
+    ) -> oneshot::Receiver<oneshot::Sender<()>> {
+        let mut clients = self.clients.write().await;
+
         let (disconnect_tx, disconnect_rx) = oneshot::channel();
-        clients.entry(packet_identifier).or_insert(disconnect_tx);
+        if let Some(tx) = clients.insert(client_identifier.to_string(), disconnect_tx) {
+            let (disconnect_tx, disconnect_rx) = oneshot::channel();
+            tx.send(disconnect_tx).expect("disconnect_tx broker side.");
+            disconnect_rx.await.expect("disconnect_rx broker side.");
+        }
+
         disconnect_rx
     }
 }
 
-async fn connect_handler(
-    mut rx: UnboundedReceiver<oneshot::Sender<()>>,
-) -> Result<(), Box<dyn Error>> {
-    while let Some(response_channel) = rx.recv().await {
-        println!("got something");
-        response_channel.send(()).expect("couldn't send.")
-    }
-
-    Ok(())
-}
-
-async fn listener(tx: UnboundedSender<Sender<()>>) -> Result<(), Box<dyn Error>> {
+async fn listener<B: 'static + Broker + Send + Sync>(broker: Arc<B>) -> Result<(), Box<dyn Error>> {
     let addr = "127.0.0.1:6142";
     let listener = TcpListener::bind(&addr).await?;
     loop {
-        let t = tx.clone();
+        let broker = broker.clone();
         // // Asynchronously wait for an inbound TcpStream.
         let (stream, addr) = listener.accept().await?;
 
-        // // Clone a handle to the `Shared` state for the new connection.
-        let state = Arc::new(Mutex::new(0u64));
-
-        // // Spawn our handler to be run asynchronously.
+        // Spawn our handler to be run asynchronously.
         tokio::spawn(async move {
             println!("accepted connection");
-            if let Err(e) = process(state, t, stream, addr).await {
+            if let Err(e) = process(broker, stream, addr).await {
                 println!("an error occurred; error = {:?}", e);
             }
         });
@@ -75,67 +77,86 @@ async fn listener(tx: UnboundedSender<Sender<()>>) -> Result<(), Box<dyn Error>>
 }
 
 /// Process an individual chat client
-async fn process(
-    _state: Arc<Mutex<u64>>,
-    tx: UnboundedSender<oneshot::Sender<()>>,
+async fn process<B: Broker>(
+    broker: Arc<B>,
     stream: TcpStream,
     _addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>> {
     let mut framed = Framed::new(stream, MqttPacketDecoder {});
 
-    handle_connection(&mut framed, tx).await?;
+    let mut disconnect_rx = handle_connect(&mut framed, broker.deref()).await?;
 
     loop {
-        match framed.next().await {
-            Some(Ok(MqttPacket::PingReq)) => {
-                println!("ping received.");
-                framed.send(MqttPacket::PingResp).await?;
+        tokio::select! {
+            packet = framed.next() => {
+                match packet {
+                    Some(Ok(MqttPacket::PingReq)) => {
+                        println!("ping received.");
+                        framed.send(MqttPacket::PingResp).await?;
+                    }
+                    Some(Ok(MqttPacket::Disconnect(_d))) => {
+                        println!("client disconnected.");
+                        return Ok(());
+                    }
+                    Some(Ok(MqttPacket::Publish(publish))) => {
+                        println!("client published packet: {:?}.", publish);
+                    }
+                    Some(Ok(MqttPacket::Subscribe(subscribe))) => {
+                        println!("client subscribed to: {:?}", subscribe.topic_filters);
+                        framed
+                            .send(MqttPacket::SubAck(SubAck {
+                                packet_identifier: subscribe.packet_identifier,
+                                reason_string: None,
+                                user_properties: None,
+                                reasons: vec![SubscribeReason::GrantedQoS0],
+                            }))
+                            .await?;
+                    }
+                    Some(Ok(_)) => {
+                        unimplemented!("packet type not impl.")
+                    }
+                    Some(Err(e)) => {
+                        println!("error: {}", e);
+                        return Ok(());
+                    },
+                    None => return Ok(())
+                }
+            },
+            disconnect_tx = &mut disconnect_rx => {
+                framed.send(MqttPacket::Disconnect(Disconnect {
+                    disconnect_reason: DisconnectReason::SessionTakenOver,
+                    server_reference: None,
+                    session_expiry_interval: None,
+                    user_properties: None,
+                    reason_string: None,
+                }))
+                .await?;
+
+                disconnect_tx?.send(()).map_err(|_| Box::new(ClientHandlerError::DisconnectError))?;
+                return Ok(())
             }
-            Some(Ok(MqttPacket::Disconnect(_d))) => {
-                println!("client disconnected.");
-                return Ok(());
-            }
-            Some(Ok(MqttPacket::Publish(publish))) => {
-                println!("client published packet: {:?}.", publish);
-            }
-            Some(Ok(MqttPacket::Subscribe(subscribe))) => {
-                println!("client subscribed to: {:?}", subscribe.topic_filters);
-                framed
-                    .send(MqttPacket::SubAck(SubAck {
-                        packet_identifier: subscribe.packet_identifier,
-                        reason_string: None,
-                        user_properties: None,
-                        reasons: vec![SubscribeReason::GrantedQoS0],
-                    }))
-                    .await?;
-            }
-            Some(Ok(_)) => {
-                unimplemented!("packet type not impl.")
-            }
-            Some(Err(e)) => {
-                println!("error: {}", e);
-                return Ok(());
-            }
-            None => return Ok(()),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-struct HandleConnectionError;
+enum ClientHandlerError {
+    ConnectError,
+    DisconnectError,
+}
 
-impl std::fmt::Display for HandleConnectionError {
+impl std::fmt::Display for ClientHandlerError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "something happened during connection.")
     }
 }
 
-impl std::error::Error for HandleConnectionError {}
+impl std::error::Error for ClientHandlerError {}
 
-async fn handle_connection(
+async fn handle_connect<B: Broker>(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
-    connect_tx: UnboundedSender<oneshot::Sender<()>>,
-) -> Result<(), Box<dyn Error>> {
+    broker: &B,
+) -> Result<oneshot::Receiver<oneshot::Sender<()>>, Box<dyn Error>> {
     // handle connection
     let connection_timeout = sleep(Duration::from_millis(1000));
     tokio::select! {
@@ -159,23 +180,17 @@ async fn handle_connection(
                         }))
                         .await?;
 
-                        // connect_handler.incoming_client(c.client_identifier).await??;
+                        let disconnect_rx = broker.incoming_connect(&c.client_identifier).await;
 
-                        let (oneshot_tx, oneshot_rx) = oneshot::channel();
-                        connect_tx.send(oneshot_tx)?;
-
-                        // allow HQ to use 10ms to process the CONNECT.
-                        tokio::time::timeout(Duration::from_millis(10), oneshot_rx).await??;
-
-                        return Ok(());
+                        Ok(disconnect_rx)
                 }
-                _ => return Err(Box::new(HandleConnectionError))
+                _ => Err(Box::new(ClientHandlerError::ConnectError))
         },
         _ = connection_timeout => {
             // connection_timeout completed before we got any 'Connection' packet. From the MQTT v5 specification:
             //   If the Server does not receive a CONNECT packet within a reasonable amount
             //   of time after the Network Connection is established, the Server SHOULD close the Network Connection.
-            return Err(Box::new(HandleConnectionError));
+            Err(Box::new(ClientHandlerError::ConnectError))
         }
     }
 }

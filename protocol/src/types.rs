@@ -191,7 +191,7 @@ pub struct ConnAck {
 #[derive(Debug, PartialEq)]
 pub enum DisconnectReason {
     NormalDisconnection,
-    // TODO...
+    SessionTakenOver, // TODO...
 }
 
 #[derive(Debug, PartialEq)]

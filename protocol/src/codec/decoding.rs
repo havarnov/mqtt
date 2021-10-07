@@ -322,6 +322,7 @@ fn parse_disconnect(input: &[u8]) -> MqttParserResult<&[u8], Disconnect> {
     let (input, disconnect_reason) = take(1usize)(input)?;
     let disconnect_reason = match disconnect_reason[0] {
         0u8 => DisconnectReason::NormalDisconnection,
+        142u8 => DisconnectReason::SessionTakenOver,
         _ => unimplemented!(),
     };
     let (input, properties) = parse_properties(input)?;
