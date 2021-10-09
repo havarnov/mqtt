@@ -50,8 +50,10 @@ impl Broker for StandardBroker {
         let (disconnect_tx, disconnect_rx) = oneshot::channel();
         if let Some(tx) = clients.insert(client_identifier.to_string(), disconnect_tx) {
             let (disconnect_tx, disconnect_rx) = oneshot::channel();
-            tx.send(disconnect_tx).expect("disconnect_tx broker side.");
-            disconnect_rx.await.expect("disconnect_rx broker side.");
+            if tx.send(disconnect_tx).is_err() || disconnect_rx.await.is_err() {
+                // client has already disconnected.
+                println!("TODO: log error")
+            }
         }
 
         disconnect_rx
