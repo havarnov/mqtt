@@ -7,7 +7,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
@@ -24,7 +24,89 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let broker = Arc::new(StandardBroker {
         clients: RwLock::new(HashMap::new()),
     });
-    listener(broker.clone()).await
+    let (tx, rx) = unbounded_channel();
+    tokio::try_join!(listener(broker.clone()), subscription_mediator(rx)).map(|_| ())
+}
+
+#[derive(Debug)]
+enum SubscriptionMediatorMessage {
+    NewSubscriber {
+        sub: String,
+        tx: UnboundedSender<()>,
+    },
+    IncomingMessage {
+        sub: String,
+        msg: (),
+    },
+}
+
+async fn subscription_mediator(
+    mut rx: UnboundedReceiver<SubscriptionMediatorMessage>,
+) -> Result<(), Box<dyn Error>> {
+    let mut subscription_handlers: HashMap<_, UnboundedSender<SubscriptionMessage>> =
+        HashMap::new();
+    loop {
+        tokio::select! {
+            msg = rx.recv() => {
+                use SubscriptionMediatorMessage::*;
+                match msg {
+                    Some(NewSubscriber { sub, tx: client_tx }) => {
+
+                        if (subscription_handlers.contains_key(&sub)) {
+                            let tx = &subscription_handlers[&sub];
+                            tx.send(SubscriptionMessage::NewSubscriber { tx: client_tx })?;
+                        }
+                        else {
+                            let (tx, rx) = unbounded_channel();
+                            tx.send(SubscriptionMessage::NewSubscriber { tx: client_tx })?;
+                            subscription_handlers.insert(sub, tx);
+                            tokio::spawn(async move {
+                                subscription_handler(rx).await;
+                            });
+                        }
+
+                        println!("newsub");
+                    },
+                    Some(IncomingMessage { sub, msg }) => {
+                        println!("incom");
+                    }
+                    None => println!("none"),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum SubscriptionMessage {
+    NewSubscriber { tx: UnboundedSender<()> },
+    IncomingMessage { msg: () },
+}
+
+async fn subscription_handler(
+    mut rx: UnboundedReceiver<SubscriptionMessage>,
+) -> Result<(), Box<dyn Error>> {
+    let mut txs = Vec::new();
+    loop {
+        tokio::select! {
+            msg = rx.recv() => {
+                use SubscriptionMessage::*;
+                match msg {
+                    Some(NewSubscriber { tx }) => {
+                        txs.push(tx);
+                        println!("newsub");
+                    },
+                    Some(IncomingMessage { msg }) => {
+                        for tx in txs.iter() {
+                            tx.send(msg)?;
+                        }
+                        println!("incoming");
+                    },
+                    None => println!("none"),
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]
