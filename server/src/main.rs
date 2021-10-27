@@ -7,6 +7,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
@@ -31,11 +32,12 @@ trait Broker {
     async fn incoming_connect(
         &self,
         client_identifier: &str,
-    ) -> oneshot::Receiver<oneshot::Sender<()>>;
+        client_tx: UnboundedSender<ClientMessage>,
+    );
 }
 
 struct StandardBroker {
-    clients: RwLock<HashMap<String, oneshot::Sender<oneshot::Sender<()>>>>,
+    clients: RwLock<HashMap<String, UnboundedSender<ClientMessage>>>,
 }
 
 #[async_trait]
@@ -44,19 +46,21 @@ impl Broker for StandardBroker {
     async fn incoming_connect(
         &self,
         client_identifier: &str,
-    ) -> oneshot::Receiver<oneshot::Sender<()>> {
+        client_tx: UnboundedSender<ClientMessage>,
+    ) {
         let mut clients = self.clients.write().await;
 
-        let (disconnect_tx, disconnect_rx) = oneshot::channel();
-        if let Some(tx) = clients.insert(client_identifier.to_string(), disconnect_tx) {
+        if let Some(tx) = clients.insert(client_identifier.to_string(), client_tx) {
             let (disconnect_tx, disconnect_rx) = oneshot::channel();
-            if tx.send(disconnect_tx).is_err() || disconnect_rx.await.is_err() {
+            if tx
+                .send(ClientMessage::SessionTakenOver(disconnect_tx))
+                .is_err()
+                || disconnect_rx.await.is_err()
+            {
                 // client has already disconnected.
                 println!("TODO: log error")
             }
         }
-
-        disconnect_rx
     }
 }
 
@@ -78,6 +82,10 @@ async fn listener<B: 'static + Broker + Send + Sync>(broker: Arc<B>) -> Result<(
     }
 }
 
+enum ClientMessage {
+    SessionTakenOver(oneshot::Sender<()>),
+}
+
 /// Process an individual chat client
 async fn process<B: Broker>(
     broker: Arc<B>,
@@ -86,7 +94,9 @@ async fn process<B: Broker>(
 ) -> Result<(), Box<dyn Error>> {
     let mut framed = Framed::new(stream, MqttPacketDecoder {});
 
-    let mut disconnect_rx = handle_connect(&mut framed, broker.deref()).await?;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    handle_connect(&mut framed, broker.deref(), tx.clone()).await?;
 
     loop {
         tokio::select! {
@@ -124,19 +134,25 @@ async fn process<B: Broker>(
                     None => return Ok(())
                 }
             },
-            disconnect_tx = &mut disconnect_rx => {
-                framed.send(MqttPacket::Disconnect(Disconnect {
-                    disconnect_reason: DisconnectReason::SessionTakenOver,
-                    server_reference: None,
-                    session_expiry_interval: None,
-                    user_properties: None,
-                    reason_string: None,
-                }))
-                .await?;
-
-                disconnect_tx?.send(()).map_err(|_| Box::new(ClientHandlerError::DisconnectError))?;
-                return Ok(())
-            }
+            client_message = rx.recv() => {
+                match client_message {
+                    Some(ClientMessage::SessionTakenOver(tx)) => {
+                        framed.send(MqttPacket::Disconnect(Disconnect {
+                            disconnect_reason: DisconnectReason::SessionTakenOver,
+                            server_reference: None,
+                            session_expiry_interval: None,
+                            user_properties: None,
+                            reason_string: None,
+                        }))
+                        .await?;
+                        tx.send(()).map_err(|_| Box::new(ClientHandlerError::DisconnectError))?;
+                        return Ok(())
+                    },
+                    None =>
+                        // TODO: what does this mean? The broker has dropped the session taken over tx...
+                        return Ok(())
+                }
+            },
         }
     }
 }
@@ -158,7 +174,8 @@ impl std::error::Error for ClientHandlerError {}
 async fn handle_connect<B: Broker>(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
     broker: &B,
-) -> Result<oneshot::Receiver<oneshot::Sender<()>>, Box<dyn Error>> {
+    client_tx: UnboundedSender<ClientMessage>,
+) -> Result<(), Box<dyn Error>> {
     // handle connection
     let connection_timeout = sleep(Duration::from_millis(1000));
     tokio::select! {
@@ -182,9 +199,9 @@ async fn handle_connect<B: Broker>(
                         }))
                         .await?;
 
-                        let disconnect_rx = broker.incoming_connect(&c.client_identifier).await;
+                        broker.incoming_connect(&c.client_identifier, client_tx).await;
 
-                        Ok(disconnect_rx)
+                        Ok(())
                 }
                 _ => Err(Box::new(ClientHandlerError::ConnectError))
         },
