@@ -14,6 +14,7 @@ use tokio::time::sleep;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
+use crate::SubscriptionMessage::{IncomingMessage, NewSubscriber};
 use mqtt_protocol::framed::MqttPacketDecoder;
 use mqtt_protocol::types::{
     ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, SubAck, SubscribeReason,
@@ -23,63 +24,14 @@ use mqtt_protocol::types::{
 async fn main() -> Result<(), Box<dyn Error>> {
     let broker = Arc::new(StandardBroker {
         clients: RwLock::new(HashMap::new()),
+        subscription_handlers: dashmap::DashMap::new(),
     });
-    let (tx, rx) = unbounded_channel();
-    tokio::try_join!(listener(broker.clone()), subscription_mediator(rx)).map(|_| ())
-}
-
-#[derive(Debug)]
-enum SubscriptionMediatorMessage {
-    NewSubscriber {
-        sub: String,
-        tx: UnboundedSender<()>,
-    },
-    IncomingMessage {
-        sub: String,
-        msg: (),
-    },
-}
-
-async fn subscription_mediator(
-    mut rx: UnboundedReceiver<SubscriptionMediatorMessage>,
-) -> Result<(), Box<dyn Error>> {
-    let mut subscription_handlers: HashMap<_, UnboundedSender<SubscriptionMessage>> =
-        HashMap::new();
-    loop {
-        tokio::select! {
-            msg = rx.recv() => {
-                use SubscriptionMediatorMessage::*;
-                match msg {
-                    Some(NewSubscriber { sub, tx: client_tx }) => {
-
-                        if (subscription_handlers.contains_key(&sub)) {
-                            let tx = &subscription_handlers[&sub];
-                            tx.send(SubscriptionMessage::NewSubscriber { tx: client_tx })?;
-                        }
-                        else {
-                            let (tx, rx) = unbounded_channel();
-                            tx.send(SubscriptionMessage::NewSubscriber { tx: client_tx })?;
-                            subscription_handlers.insert(sub, tx);
-                            tokio::spawn(async move {
-                                subscription_handler(rx).await;
-                            });
-                        }
-
-                        println!("newsub");
-                    },
-                    Some(IncomingMessage { sub, msg }) => {
-                        println!("incom");
-                    }
-                    None => println!("none"),
-                }
-            }
-        }
-    }
+    listener(broker.clone()).await
 }
 
 #[derive(Debug)]
 enum SubscriptionMessage {
-    NewSubscriber { tx: UnboundedSender<()> },
+    NewSubscriber { tx: UnboundedSender<ClientMessage> },
     IncomingMessage { msg: () },
 }
 
@@ -96,9 +48,9 @@ async fn subscription_handler(
                         txs.push(tx);
                         println!("newsub");
                     },
-                    Some(IncomingMessage { msg }) => {
+                    Some(IncomingMessage { msg: _msg }) => {
                         for tx in txs.iter() {
-                            tx.send(msg)?;
+                            tx.send(ClientMessage::NewMessageOnSubscription)?;
                         }
                         println!("incoming");
                     },
@@ -116,10 +68,17 @@ trait Broker {
         client_identifier: &str,
         client_tx: UnboundedSender<ClientMessage>,
     );
+
+    async fn subscription_message(
+        &self,
+        subscription_identifier: &str,
+        msg: SubscriptionMessage,
+    ) -> Result<(), Box<dyn Error>>;
 }
 
 struct StandardBroker {
     clients: RwLock<HashMap<String, UnboundedSender<ClientMessage>>>,
+    subscription_handlers: dashmap::DashMap<String, UnboundedSender<SubscriptionMessage>>,
 }
 
 #[async_trait]
@@ -144,6 +103,28 @@ impl Broker for StandardBroker {
             }
         }
     }
+
+    async fn subscription_message(
+        &self,
+        subscription_identifier: &str,
+        msg: SubscriptionMessage,
+    ) -> Result<(), Box<dyn Error>> {
+        let tx = self
+            .subscription_handlers
+            .entry(subscription_identifier.to_string())
+            .or_insert_with(|| {
+                let (tx, rx) = unbounded_channel();
+                tokio::spawn(async move {
+                    if let Err(e) = subscription_handler(rx).await {
+                        println!("{}", e);
+                    }
+                });
+                tx
+            });
+
+        tx.send(msg)?;
+        Ok(())
+    }
 }
 
 async fn listener<B: 'static + Broker + Send + Sync>(broker: Arc<B>) -> Result<(), Box<dyn Error>> {
@@ -164,8 +145,10 @@ async fn listener<B: 'static + Broker + Send + Sync>(broker: Arc<B>) -> Result<(
     }
 }
 
+#[derive(Debug)]
 enum ClientMessage {
     SessionTakenOver(oneshot::Sender<()>),
+    NewMessageOnSubscription,
 }
 
 /// Process an individual chat client
@@ -194,9 +177,20 @@ async fn process<B: Broker>(
                     }
                     Some(Ok(MqttPacket::Publish(publish))) => {
                         println!("client published packet: {:?}.", publish);
+                        broker.subscription_message(
+                            &publish.topic_name,
+                            IncomingMessage { msg: () })
+                        .await?;
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
                         println!("client subscribed to: {:?}", subscribe.topic_filters);
+
+                        for topic_filter in subscribe.topic_filters.iter() {
+                            broker.subscription_message(
+                                &topic_filter.topic_name,
+                                NewSubscriber { tx: tx.clone() }).await?;
+                        }
+
                         framed
                             .send(MqttPacket::SubAck(SubAck {
                                 packet_identifier: subscribe.packet_identifier,
@@ -230,6 +224,7 @@ async fn process<B: Broker>(
                         tx.send(()).map_err(|_| Box::new(ClientHandlerError::DisconnectError))?;
                         return Ok(())
                     },
+                    Some(ClientMessage::NewMessageOnSubscription) => println!("should send msg to client"),
                     None =>
                         // TODO: what does this mean? The broker has dropped the session taken over tx...
                         return Ok(())
