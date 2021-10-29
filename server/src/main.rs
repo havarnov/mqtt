@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use futures::SinkExt;
-use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -9,7 +8,6 @@ use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
-use tokio::sync::RwLock;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
@@ -23,7 +21,7 @@ use mqtt_protocol::types::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let broker = Arc::new(StandardBroker {
-        clients: RwLock::new(HashMap::new()),
+        clients: dashmap::DashMap::new(),
         subscription_handlers: dashmap::DashMap::new(),
     });
     listener(broker.clone()).await
@@ -77,7 +75,7 @@ trait Broker {
 }
 
 struct StandardBroker {
-    clients: RwLock<HashMap<String, UnboundedSender<ClientMessage>>>,
+    clients: dashmap::DashMap<String, UnboundedSender<ClientMessage>>,
     subscription_handlers: dashmap::DashMap<String, UnboundedSender<SubscriptionMessage>>,
 }
 
@@ -89,9 +87,10 @@ impl Broker for StandardBroker {
         client_identifier: &str,
         client_tx: UnboundedSender<ClientMessage>,
     ) {
-        let mut clients = self.clients.write().await;
-
-        if let Some(tx) = clients.insert(client_identifier.to_string(), client_tx) {
+        if let Some(tx) = self
+            .clients
+            .insert(client_identifier.to_string(), client_tx)
+        {
             let (disconnect_tx, disconnect_rx) = oneshot::channel();
             if tx
                 .send(ClientMessage::SessionTakenOver(disconnect_tx))
