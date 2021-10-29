@@ -232,13 +232,22 @@ pub struct Publish {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum RetainHandling {
+    // 0 - Send retained messages at the time of the subscribe
+    SendRetained,
+    // 1 - Send retained messages at subscribe only if the subscription does not currently exist
+    SendRetainedForNewSubscription,
+    // 2 - Do not send retained messages at the time of the subscribe
+    DoNotSendRetained,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct TopicFilter {
     pub topic_name: String,
     pub maximum_qos: QoS,
     pub no_local: bool,
     pub retain_as_published: bool,
-    // TODO: change to enum?
-    pub retain_handling: u8,
+    pub retain_handling: RetainHandling,
 }
 
 #[derive(Debug, PartialEq)]

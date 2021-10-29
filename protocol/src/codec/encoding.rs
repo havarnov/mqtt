@@ -1,6 +1,7 @@
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
-    QoS, SubAck, Subscribe, SubscribeReason, UnsubAck, Unsubscribe, UnsubscribeReason,
+    QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, UnsubAck, Unsubscribe,
+    UnsubscribeReason,
 };
 
 fn encode_connect_reason(reason: &ConnectReason) -> u8 {
@@ -339,7 +340,12 @@ fn encode_subscribe(subscribe: &Subscribe) -> Vec<u8> {
     for topic_filter in subscribe.topic_filters.iter() {
         variable_header_and_payload.extend(&encode_string(&topic_filter.topic_name));
         let mut options_byte = 0u8;
-        options_byte |= topic_filter.retain_handling << 4;
+        let retain_handling_u8 = match topic_filter.retain_handling {
+            RetainHandling::SendRetained => 0u8,
+            RetainHandling::SendRetainedForNewSubscription => 1u8,
+            RetainHandling::DoNotSendRetained => 2u8,
+        };
+        options_byte |= retain_handling_u8 << 4;
         options_byte |= if topic_filter.retain_as_published {
             0b0000_1000u8
         } else {

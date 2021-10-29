@@ -1,8 +1,8 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
-    QoS, SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe, UnsubscribeReason,
-    UserProperty, Will,
+    QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe,
+    UnsubscribeReason, UserProperty, Will,
 };
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
@@ -401,7 +401,12 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
 
         let no_local = options[0] & 0b0000_0100u8 == 0b0000_0100;
         let retain_as_published = options[0] & 0b0000_1000u8 == 0b0000_1000;
-        let retain_handling = (options[0] & 0b0011_0000u8) >> 4;
+        let retain_handling = match (options[0] & 0b0011_0000u8) >> 4 {
+            0u8 => RetainHandling::SendRetained,
+            1u8 => RetainHandling::SendRetainedForNewSubscription,
+            2u8 => RetainHandling::DoNotSendRetained,
+            _ => return Err(nom::Err::Failure(MalformedPacket)),
+        };
 
         topic_filters.push(TopicFilter {
             topic_name,

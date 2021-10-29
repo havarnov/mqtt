@@ -3,8 +3,8 @@ use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
-    SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe, UnsubscribeReason,
-    Will,
+    RetainHandling, SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe,
+    UnsubscribeReason, Will,
 };
 
 macro_rules! packet_tests {
@@ -234,14 +234,14 @@ packet_tests! {
                     topic_name: "foobar".to_string(),
                     maximum_qos: QoS::AtMostOnce,
                     no_local: true,
-                    retain_handling: 0u8,
+                    retain_handling: RetainHandling::SendRetained,
                     retain_as_published: false,
                 },
                 TopicFilter {
                     topic_name: "rall".to_string(),
                     maximum_qos: QoS::ExactlyOnce,
                     no_local: false,
-                    retain_handling: 1u8,
+                    retain_handling: RetainHandling::SendRetainedForNewSubscription,
                     retain_as_published: true,
                 },
             ]
