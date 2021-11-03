@@ -338,7 +338,7 @@ fn encode_subscribe(subscribe: &Subscribe) -> Vec<u8> {
     variable_header_and_payload.extend(&encode_properties(&properties));
 
     for topic_filter in subscribe.topic_filters.iter() {
-        variable_header_and_payload.extend(&encode_string(&topic_filter.topic_name));
+        variable_header_and_payload.extend(&encode_string(&topic_filter.filter));
         let mut options_byte = 0u8;
         let retain_handling_u8 = match topic_filter.retain_handling {
             RetainHandling::SendRetained => 0u8,

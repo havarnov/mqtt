@@ -1,3 +1,5 @@
+mod topic_filter;
+
 use async_trait::async_trait;
 use futures::SinkExt;
 use std::error::Error;
@@ -186,7 +188,7 @@ async fn process<B: Broker>(
 
                         for topic_filter in subscribe.topic_filters.iter() {
                             broker.subscription_message(
-                                &topic_filter.topic_name,
+                                &topic_filter.filter,
                                 NewSubscriber { tx: tx.clone() }).await?;
                         }
 

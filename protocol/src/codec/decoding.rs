@@ -409,7 +409,7 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
         };
 
         topic_filters.push(TopicFilter {
-            topic_name,
+            filter: topic_name,
             maximum_qos,
             no_local,
             retain_as_published,

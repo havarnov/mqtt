@@ -243,7 +243,7 @@ pub enum RetainHandling {
 
 #[derive(Debug, PartialEq)]
 pub struct TopicFilter {
-    pub topic_name: String,
+    pub filter: String,
     pub maximum_qos: QoS,
     pub no_local: bool,
     pub retain_as_published: bool,

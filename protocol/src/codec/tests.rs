@@ -231,14 +231,14 @@ packet_tests! {
             user_properties: None,
             topic_filters: vec![
                 TopicFilter {
-                    topic_name: "foobar".to_string(),
+                    filter: "foobar".to_string(),
                     maximum_qos: QoS::AtMostOnce,
                     no_local: true,
                     retain_handling: RetainHandling::SendRetained,
                     retain_as_published: false,
                 },
                 TopicFilter {
-                    topic_name: "rall".to_string(),
+                    filter: "rall".to_string(),
                     maximum_qos: QoS::ExactlyOnce,
                     no_local: false,
                     retain_handling: RetainHandling::SendRetainedForNewSubscription,
