@@ -204,14 +204,14 @@ pub struct Disconnect {
     pub server_reference: Option<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum QoS {
     AtMostOnce,
     AtLeastOnce,
     ExactlyOnce,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Publish {
     pub duplicate: bool,
     pub qos: QoS,
@@ -231,7 +231,7 @@ pub struct Publish {
     pub payload: Vec<u8>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RetainHandling {
     // 0 - Send retained messages at the time of the subscribe
     SendRetained,
@@ -241,7 +241,7 @@ pub enum RetainHandling {
     DoNotSendRetained,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TopicFilter {
     pub filter: String,
     pub maximum_qos: QoS,
@@ -250,7 +250,7 @@ pub struct TopicFilter {
     pub retain_handling: RetainHandling,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Subscribe {
     pub packet_identifier: u16,
     pub subscription_identifier: Option<u32>,

@@ -14,11 +14,10 @@ use tokio::time::sleep;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
+use crate::topic_filter::TopicFilter;
 use crate::SubscriptionMessage::{IncomingMessage, NewSubscriber};
 use mqtt_protocol::framed::MqttPacketDecoder;
-use mqtt_protocol::types::{
-    ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, SubAck, SubscribeReason,
-};
+use mqtt_protocol::types::{ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, SubAck, Subscribe, SubscribeReason};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -29,13 +28,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     listener(broker.clone()).await
 }
 
+
 #[derive(Debug)]
 enum SubscriptionMessage {
-    NewSubscriber { tx: UnboundedSender<ClientMessage> },
-    IncomingMessage { msg: () },
+    NewSubscriber { tx: UnboundedSender<ClientMessage>, msg: Subscribe },
+    IncomingMessage { msg: Publish },
 }
 
 async fn subscription_handler(
+    topic_filter: TopicFilter,
     mut rx: UnboundedReceiver<SubscriptionMessage>,
 ) -> Result<(), Box<dyn Error>> {
     let mut txs = Vec::new();
@@ -44,15 +45,21 @@ async fn subscription_handler(
             msg = rx.recv() => {
                 use SubscriptionMessage::*;
                 match msg {
-                    Some(NewSubscriber { tx }) => {
-                        txs.push(tx);
+                    Some(NewSubscriber { tx, msg }) => {
+                        txs.push((tx, msg));
                         println!("newsub");
                     },
-                    Some(IncomingMessage { msg: _msg }) => {
-                        for tx in txs.iter() {
-                            tx.send(ClientMessage::NewMessageOnSubscription)?;
+                    Some(IncomingMessage { msg }) => {
+                        if topic_filter.matches(&msg.topic_name) {
+                            for (tx, subscribe) in txs.iter() {
+                                let msg = Publish {
+                                    subscription_identifier: subscribe.subscription_identifier.clone(),
+                                    ..msg.clone()
+                                };
+                                tx.send(ClientMessage::NewMessageOnSubscription(msg))?;
+                            }
+                            println!("incoming");
                         }
-                        println!("incoming");
                     },
                     None => println!("none"),
                 }
@@ -110,13 +117,15 @@ impl Broker for StandardBroker {
         subscription_identifier: &str,
         msg: SubscriptionMessage,
     ) -> Result<(), Box<dyn Error>> {
+        let topic_filter = TopicFilter::new(subscription_identifier)?;
         let tx = self
             .subscription_handlers
             .entry(subscription_identifier.to_string())
             .or_insert_with(|| {
+                // TODO: spawn shared subscription handler if $shared.
                 let (tx, rx) = unbounded_channel();
                 tokio::spawn(async move {
-                    if let Err(e) = subscription_handler(rx).await {
+                    if let Err(e) = subscription_handler(topic_filter, rx).await {
                         println!("{}", e);
                     }
                 });
@@ -149,7 +158,7 @@ async fn listener<B: 'static + Broker + Send + Sync>(broker: Arc<B>) -> Result<(
 #[derive(Debug)]
 enum ClientMessage {
     SessionTakenOver(oneshot::Sender<()>),
-    NewMessageOnSubscription,
+    NewMessageOnSubscription(Publish),
 }
 
 /// Process an individual chat client
@@ -180,7 +189,7 @@ async fn process<B: Broker>(
                         println!("client published packet: {:?}.", publish);
                         broker.subscription_message(
                             &publish.topic_name,
-                            IncomingMessage { msg: () })
+                            IncomingMessage { msg: publish.clone() })
                         .await?;
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
@@ -189,7 +198,7 @@ async fn process<B: Broker>(
                         for topic_filter in subscribe.topic_filters.iter() {
                             broker.subscription_message(
                                 &topic_filter.filter,
-                                NewSubscriber { tx: tx.clone() }).await?;
+                                NewSubscriber { tx: tx.clone(), msg: subscribe.clone() }).await?;
                         }
 
                         framed
@@ -225,7 +234,9 @@ async fn process<B: Broker>(
                         tx.send(()).map_err(|_| Box::new(ClientHandlerError::DisconnectError))?;
                         return Ok(())
                     },
-                    Some(ClientMessage::NewMessageOnSubscription) => println!("should send msg to client"),
+                    Some(ClientMessage::NewMessageOnSubscription(publish)) => {
+                        framed.send(MqttPacket::Publish(publish)).await?;
+                    },
                     None =>
                         // TODO: what does this mean? The broker has dropped the session taken over tx...
                         return Ok(())
