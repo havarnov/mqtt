@@ -204,11 +204,11 @@ pub struct Disconnect {
     pub server_reference: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum QoS {
-    AtMostOnce,
-    AtLeastOnce,
-    ExactlyOnce,
+    AtMostOnce = 0,
+    AtLeastOnce = 1,
+    ExactlyOnce = 2,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -253,6 +253,9 @@ pub struct TopicFilter {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Subscribe {
     pub packet_identifier: u16,
+    /// The Subscription Identifier is associated with any subscription created or modified as the result of this SUBSCRIBE packet.
+    /// If there is a Subscription Identifier, it is stored with the subscription.
+    /// If this property is not specified, then the absence of a Subscription Identifier is stored with the subscription.
     pub subscription_identifier: Option<u32>,
     pub user_properties: Option<Vec<UserProperty>>,
     pub topic_filters: Vec<TopicFilter>,

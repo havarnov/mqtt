@@ -1,5 +1,6 @@
 mod topic_filter;
 
+use std::collections::HashMap;
 use async_trait::async_trait;
 use futures::SinkExt;
 use std::error::Error;
@@ -17,7 +18,7 @@ use tokio_util::codec::Framed;
 use crate::topic_filter::TopicFilter;
 use crate::SubscriptionMessage::{IncomingMessage, NewSubscriber};
 use mqtt_protocol::framed::MqttPacketDecoder;
-use mqtt_protocol::types::{ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, SubAck, Subscribe, SubscribeReason};
+use mqtt_protocol::types::{ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS, SubAck, SubscribeReason};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -31,34 +32,111 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 #[derive(Debug)]
 enum SubscriptionMessage {
-    NewSubscriber { tx: UnboundedSender<ClientMessage>, msg: Subscribe },
-    IncomingMessage { msg: Publish },
+    NewSubscriber {
+        // TODO: should a publish matching multiple topic filters be sent to as one publish packet?
+        client_identifier: String,
+        subscription_identifier: Option<u32>,
+        topic_filter: mqtt_protocol::types::TopicFilter,
+        tx: UnboundedSender<ClientMessage>,
+    },
+    IncomingMessage { publish: Publish },
 }
 
-async fn subscription_handler(
+struct TopicSubscriberInformation {
+    subscription_identifier: Option<u32>,
+    topic_filter: mqtt_protocol::types::TopicFilter,
+    tx: UnboundedSender<ClientMessage>,
+}
+
+async fn topic_handler(
     topic_filter: TopicFilter,
     mut rx: UnboundedReceiver<SubscriptionMessage>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut txs = Vec::new();
+    let mut _retained = None;
+    let mut subscribers = HashMap::new();
     loop {
         tokio::select! {
             msg = rx.recv() => {
                 use SubscriptionMessage::*;
                 match msg {
-                    Some(NewSubscriber { tx, msg }) => {
-                        txs.push((tx, msg));
+                    Some(NewSubscriber {
+                        client_identifier,
+                        subscription_identifier,
+                        topic_filter,
+                        tx,
+                    }) => {
+                        // TODO: send retained packet if applicable.
+
+                        subscribers.insert(
+                            client_identifier,
+                            TopicSubscriberInformation {
+                                subscription_identifier,
+                                topic_filter,
+                                tx,
+                            });
+
                         println!("newsub");
                     },
-                    Some(IncomingMessage { msg }) => {
-                        if topic_filter.matches(&msg.topic_name) {
-                            for (tx, subscribe) in txs.iter() {
-                                let msg = Publish {
-                                    subscription_identifier: subscribe.subscription_identifier.clone(),
-                                    ..msg.clone()
+                    Some(IncomingMessage { publish }) => {
+                        if publish.retain {
+                            _retained = Some(publish.clone());
+                        }
+
+                        if topic_filter.matches(&publish.topic_name)
+                        {
+                            for subscriber in subscribers.values() {
+                                let qos = if subscriber.topic_filter.maximum_qos > publish.qos {
+                                    publish.qos.clone()
+                                } else {
+                                    subscriber.topic_filter.maximum_qos.clone()
                                 };
-                                tx.send(ClientMessage::NewMessageOnSubscription(msg))?;
+
+                                let retain = if subscriber.topic_filter.retain_as_published {
+                                    publish.retain.clone()
+                                } else {
+                                    false
+                                };
+
+                                // 3.3.2.2 Packet Identifier
+                                // The Packet Identifier field is only present in PUBLISH packets where the QoS level is 1 or 2.
+                                let packet_identifier = if qos > QoS::AtMostOnce {
+                                    publish.packet_identifier.clone()
+                                } else {
+                                    None
+                                };
+
+                                // 3.3.2.3.3 Message Expiry Interval
+                                // The PUBLISH packet sent to a Client by the Server MUST contain a
+                                // Message Expiry Interval set to the received value minus the time that
+                                // the Application Message has been waiting in the Server
+                                let message_expiry_interval = if let Some(message_expiry_interval) = publish.message_expiry_interval {
+                                    // TODO: find out the difference between the time the message was received and the time it was sent
+                                    Some(message_expiry_interval - 0u32)
+                                } else {
+                                    None
+                                };
+
+                                subscriber.tx.send(
+                                    ClientMessage::NewMessageOnSubscription(
+                                        Publish {
+                                            duplicate: false,
+                                            qos,
+                                            retain,
+                                            topic_name: publish.topic_name.clone(),
+                                            packet_identifier,
+                                            payload_format_indicator: publish.payload_format_indicator.clone(),
+                                            message_expiry_interval,
+                                            // TODO: how to handle this?
+                                            topic_alias: None,
+                                            response_topic: publish.response_topic.clone(),
+                                            correlation_data: publish.correlation_data.clone(),
+                                            user_properties: publish.user_properties.clone(),
+                                            // TODO: check how to handle topic names that matches multiple topic filters (for the same client)?
+                                            subscription_identifier: subscriber.subscription_identifier,
+                                            content_type: publish.content_type.clone(),
+                                            payload: publish.payload.clone()
+                                        }))?;
                             }
-                            println!("incoming");
                         }
                     },
                     None => println!("none"),
@@ -125,7 +203,7 @@ impl Broker for StandardBroker {
                 // TODO: spawn shared subscription handler if $shared.
                 let (tx, rx) = unbounded_channel();
                 tokio::spawn(async move {
-                    if let Err(e) = subscription_handler(topic_filter, rx).await {
+                    if let Err(e) = topic_handler(topic_filter, rx).await {
                         println!("{}", e);
                     }
                 });
@@ -171,7 +249,7 @@ async fn process<B: Broker>(
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    handle_connect(&mut framed, broker.deref(), tx.clone()).await?;
+    let client_identifier = handle_connect(&mut framed, broker.deref(), tx.clone()).await?;
 
     loop {
         tokio::select! {
@@ -189,7 +267,7 @@ async fn process<B: Broker>(
                         println!("client published packet: {:?}.", publish);
                         broker.subscription_message(
                             &publish.topic_name,
-                            IncomingMessage { msg: publish.clone() })
+                            IncomingMessage { publish: publish.clone() })
                         .await?;
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
@@ -198,7 +276,12 @@ async fn process<B: Broker>(
                         for topic_filter in subscribe.topic_filters.iter() {
                             broker.subscription_message(
                                 &topic_filter.filter,
-                                NewSubscriber { tx: tx.clone(), msg: subscribe.clone() }).await?;
+                                NewSubscriber {
+                                    client_identifier: client_identifier.clone(),
+                                    subscription_identifier: subscribe.subscription_identifier,
+                                    topic_filter: topic_filter.clone(),
+                                    tx: tx.clone(),
+                                }).await?;
                         }
 
                         framed
@@ -264,7 +347,7 @@ async fn handle_connect<B: Broker>(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
     broker: &B,
     client_tx: UnboundedSender<ClientMessage>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<String, Box<dyn Error>> {
     // handle connection
     let connection_timeout = sleep(Duration::from_millis(1000));
     tokio::select! {
@@ -272,6 +355,12 @@ async fn handle_connect<B: Broker>(
             match packet {
                 Some(Ok(MqttPacket::Connect(c))) => {
                     println!("{:?}", c);
+
+                    if c.client_identifier.is_empty() {
+                        // TODO: respond with ConnAck with error code
+                        return Err(Box::new(ClientHandlerError::ConnectError));
+                    }
+
                     framed
                         .send(MqttPacket::ConnAck(ConnAck {
                             session_present: false,
@@ -290,7 +379,7 @@ async fn handle_connect<B: Broker>(
 
                         broker.incoming_connect(&c.client_identifier, client_tx).await;
 
-                        Ok(())
+                        Ok(c.client_identifier)
                 }
                 _ => Err(Box::new(ClientHandlerError::ConnectError))
         },
