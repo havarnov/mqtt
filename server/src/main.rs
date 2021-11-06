@@ -87,7 +87,7 @@ async fn topic_handler(
 
                         if topic_filter.matches(&publish.topic_name)
                         {
-                            for subscriber in subscribers.values() {
+                            subscribers.retain(|_, subscriber| {
                                 let qos = if subscriber.topic_filter.maximum_qos > publish.qos {
                                     publish.qos.clone()
                                 } else {
@@ -95,7 +95,7 @@ async fn topic_handler(
                                 };
 
                                 let retain = if subscriber.topic_filter.retain_as_published {
-                                    publish.retain.clone()
+                                    publish.retain
                                 } else {
                                     false
                                 };
@@ -103,7 +103,7 @@ async fn topic_handler(
                                 // 3.3.2.2 Packet Identifier
                                 // The Packet Identifier field is only present in PUBLISH packets where the QoS level is 1 or 2.
                                 let packet_identifier = if qos > QoS::AtMostOnce {
-                                    publish.packet_identifier.clone()
+                                    publish.packet_identifier
                                 } else {
                                     None
                                 };
@@ -112,13 +112,10 @@ async fn topic_handler(
                                 // The PUBLISH packet sent to a Client by the Server MUST contain a
                                 // Message Expiry Interval set to the received value minus the time that
                                 // the Application Message has been waiting in the Server
-                                let message_expiry_interval = if let Some(message_expiry_interval) = publish.message_expiry_interval {
-                                    // TODO: find out the difference between the time the message was received and the time it was sent
-                                    Some(message_expiry_interval - 0u32)
-                                } else {
-                                    None
-                                };
+                                // TODO: find out the difference between the time the message was received and the time it was sent
+                                let message_expiry_interval = publish.message_expiry_interval.map(|e| e - 0u32);
 
+                                // if tx is dropped the send will fail and we'll return false and retain will remove it from the subscribers hashmap.
                                 subscriber.tx.send(
                                     ClientMessage::NewMessageOnSubscription(
                                         Publish {
@@ -127,7 +124,7 @@ async fn topic_handler(
                                             retain,
                                             topic_name: publish.topic_name.clone(),
                                             packet_identifier,
-                                            payload_format_indicator: publish.payload_format_indicator.clone(),
+                                            payload_format_indicator: publish.payload_format_indicator,
                                             message_expiry_interval,
                                             // TODO: how to handle this?
                                             topic_alias: None,
@@ -138,8 +135,8 @@ async fn topic_handler(
                                             subscription_identifier: subscriber.subscription_identifier,
                                             content_type: publish.content_type.clone(),
                                             payload: publish.payload.clone()
-                                        }))?;
-                            }
+                                        })).is_ok()
+                            });
                         }
                     },
                     None => println!("none"),
@@ -198,6 +195,10 @@ impl Broker for StandardBroker {
         subscription_identifier: &str,
         msg: SubscriptionMessage,
     ) -> Result<(), Box<dyn Error>> {
+        if subscription_identifier.starts_with("$shared/") {
+            unimplemented!("Handle shared subscriptions.");
+        }
+
         let topic_filter = TopicFilter::new(subscription_identifier)?;
         let tx = self
             .subscription_handlers
@@ -298,7 +299,7 @@ async fn process<B: Broker>(
                                 packet_identifier: subscribe.packet_identifier,
                                 reason_string: None,
                                 user_properties: None,
-                                reasons: reasons,
+                                reasons,
                             }))
                             .await?;
                     }
