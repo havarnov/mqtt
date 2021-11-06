@@ -408,6 +408,7 @@ fn encode_suback(suback: &SubAck) -> Vec<u8> {
 
     variable_header_and_payload.extend(suback.reasons.iter().map(|i| match i {
         SubscribeReason::GrantedQoS0 => 0u8,
+        SubscribeReason::UnspecifiedError => 128u8,
     }));
 
     let total_len = &encode_variable_u32(variable_header_and_payload.len() as u32);

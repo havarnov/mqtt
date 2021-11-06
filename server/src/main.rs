@@ -1,8 +1,8 @@
 mod topic_filter;
 
-use std::collections::HashMap;
 use async_trait::async_trait;
-use futures::SinkExt;
+use futures::{SinkExt, StreamExt};
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -12,13 +12,15 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::time::sleep;
-use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
 use crate::topic_filter::TopicFilter;
 use crate::SubscriptionMessage::{IncomingMessage, NewSubscriber};
 use mqtt_protocol::framed::MqttPacketDecoder;
-use mqtt_protocol::types::{ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS, SubAck, SubscribeReason};
+use mqtt_protocol::types::{
+    ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS, SubAck,
+    SubscribeReason,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -29,7 +31,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     listener(broker.clone()).await
 }
 
-
 #[derive(Debug)]
 enum SubscriptionMessage {
     NewSubscriber {
@@ -39,7 +40,9 @@ enum SubscriptionMessage {
         topic_filter: mqtt_protocol::types::TopicFilter,
         tx: UnboundedSender<ClientMessage>,
     },
-    IncomingMessage { publish: Publish },
+    IncomingMessage {
+        publish: Publish,
+    },
 }
 
 struct TopicSubscriberInformation {
@@ -273,15 +276,21 @@ async fn process<B: Broker>(
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
                         println!("client subscribed to: {:?}", subscribe.topic_filters);
 
+                        let mut reasons = Vec::new();
                         for topic_filter in subscribe.topic_filters.iter() {
-                            broker.subscription_message(
+                            let reason = match broker.subscription_message(
                                 &topic_filter.filter,
                                 NewSubscriber {
                                     client_identifier: client_identifier.clone(),
                                     subscription_identifier: subscribe.subscription_identifier,
                                     topic_filter: topic_filter.clone(),
                                     tx: tx.clone(),
-                                }).await?;
+                                }).await {
+                                Ok(_) => SubscribeReason::GrantedQoS0,
+                                Err(_) => SubscribeReason::UnspecifiedError,
+                            };
+
+                            reasons.push(reason);
                         }
 
                         framed
@@ -289,7 +298,7 @@ async fn process<B: Broker>(
                                 packet_identifier: subscribe.packet_identifier,
                                 reason_string: None,
                                 user_properties: None,
-                                reasons: vec![SubscribeReason::GrantedQoS0],
+                                reasons: reasons,
                             }))
                             .await?;
                     }

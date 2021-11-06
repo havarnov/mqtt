@@ -174,7 +174,6 @@ pub enum ConnectReason {
 
 #[derive(Debug, PartialEq)]
 pub struct ConnAck {
-
     /// 3.2.2.1.1 Session Present
     ///
     /// The Session Present flag informs the Client whether the Server is using Session State from a previous connection for this ClientID.
@@ -333,7 +332,11 @@ pub struct UnsubAck {
 
 #[derive(Debug, PartialEq)]
 pub enum SubscribeReason {
+    /// 0
     GrantedQoS0,
+
+    /// 128
+    UnspecifiedError,
     // TODO ..
 }
 
