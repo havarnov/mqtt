@@ -174,17 +174,68 @@ pub enum ConnectReason {
 
 #[derive(Debug, PartialEq)]
 pub struct ConnAck {
+
+    /// 3.2.2.1.1 Session Present
+    ///
+    /// The Session Present flag informs the Client whether the Server is using Session State from a previous connection for this ClientID.
     pub session_present: bool,
+
+    /// 3.2.2.2 Connect Reason Code
+    ///
+    /// If a Server sends a CONNACK packet containing a Reason code of 128 or greater it MUST then close the Network Connection.
     pub connect_reason: ConnectReason,
-    // properties
+
+    /// 3.2.2.3.2 Session Expiry Interval
+    ///
+    /// Representing the Session Expiry Interval in seconds.
+    /// TODO: Change to Duration?
     pub session_expiry_interval: Option<u32>,
+
+    /// 3.2.2.3.3 Receive Maximum
+    ///
+    /// The Server uses this value to limit the number of QoS 1 and QoS 2 publications that it is willing to process concurrently for the Client.
+    /// If the Receive Maximum value is absent, then its value defaults to 65,535.
     pub receive_maximum: Option<u16>,
+
+    /// 3.2.2.3.4 Maximum QoS
+    ///
+    /// If a Server does not support QoS 1 or QoS 2 PUBLISH packets it MUST send a Maximum QoS in the CONNACK packet specifying the highest QoS it supports.
     pub maximum_qos: Option<u8>,
+
+    /// 3.2.2.3.5 Retain Available
+    ///
+    /// Declares whether the Server supports retained messages.
+    /// If not present, then retained messages are supported.
     pub retain_available: Option<bool>,
+
+    /// 3.2.2.3.6 Maximum Packet Size
+    ///
+    /// Representing the Maximum Packet Size the Server is willing to accept.
+    /// If the Maximum Packet Size is not present, there is no limit on the packet size imposed beyond the
+    /// limitations in the protocol as a result of the remaining length encoding and the protocol header sizes.
     pub maximum_packet_size: Option<u32>,
+
+    /// 3.2.2.3.7 Assigned Client Identifier
+    ///
+    /// The Client Identifier which was assigned by the Server because a zero length Client Identifier was found in the CONNECT packet.
     pub assigned_client_identifier: Option<String>,
+
+    /// 3.2.2.3.8 Topic Alias Maximum
+    ///
+    /// This value indicates the highest value that the Server will accept as a Topic Alias sent by the Client.
+    /// The Server uses this value to limit the number of Topic Aliases that it is willing to hold on this Connection.
     pub topic_alias_maximum: Option<u16>,
+
+    /// 3.2.2.3.9 Reason String
+    ///
+    /// The Server uses this value to give additional information to the Client.
+    /// TODO: The Server MUST NOT send this property if it would increase the size of the CONNACK packet beyond the Maximum Packet Size specified by the Client
     pub reason_string: Option<String>,
+
+    /// 3.2.2.3.10 User Property
+    ///
+    /// The content and meaning of this property is not defined by this specification.
+    /// The receiver of a CONNACK containing this property MAY ignore it.
     pub user_properties: Option<Vec<UserProperty>>,
 }
 

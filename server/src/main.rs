@@ -357,7 +357,25 @@ async fn handle_connect<B: Broker>(
                     println!("{:?}", c);
 
                     if c.client_identifier.is_empty() {
-                        // TODO: respond with ConnAck with error code
+                        // TODO: assign a server generated client identifier.
+                        return Err(Box::new(ClientHandlerError::ConnectError));
+                    }
+
+                    if !c.clean_start {
+                        framed.send(MqttPacket::ConnAck(ConnAck {
+                            connect_reason: ConnectReason::ImplementationSpecificError,
+                            reason_string: Some("Session not supported".to_string()),
+                            session_present: false,
+                            session_expiry_interval: None,
+                            receive_maximum: None,
+                            maximum_qos: None,
+                            retain_available: None,
+                            maximum_packet_size: None,
+                            assigned_client_identifier: None,
+                            topic_alias_maximum: None,
+                            user_properties: None,
+                        })).await?;
+
                         return Err(Box::new(ClientHandlerError::ConnectError));
                     }
 
