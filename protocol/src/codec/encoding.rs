@@ -276,7 +276,9 @@ fn encode_unsuback(unsuback: &UnsubAck) -> Vec<u8> {
 fn encode_disconnect(disconnect: &Disconnect) -> Vec<u8> {
     let mut variable_header_and_payload = vec![match disconnect.disconnect_reason {
         DisconnectReason::NormalDisconnection => 0u8,
+        DisconnectReason::ProtocolError => 130u8,
         DisconnectReason::SessionTakenOver => 142u8,
+        DisconnectReason::TopicAliasInvalid => 148u8,
     }];
 
     let properties = Properties {

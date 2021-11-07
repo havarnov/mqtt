@@ -126,7 +126,6 @@ async fn topic_handler(
                                             packet_identifier,
                                             payload_format_indicator: publish.payload_format_indicator,
                                             message_expiry_interval,
-                                            // TODO: how to handle this?
                                             topic_alias: None,
                                             response_topic: publish.response_topic.clone(),
                                             correlation_data: publish.correlation_data.clone(),
@@ -253,6 +252,7 @@ async fn process<B: Broker>(
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
+    let mut topic_alias_map = HashMap::new();
     let client_identifier = handle_connect(&mut framed, broker.deref(), tx.clone()).await?;
 
     loop {
@@ -269,12 +269,58 @@ async fn process<B: Broker>(
                     }
                     Some(Ok(MqttPacket::Publish(publish))) => {
                         println!("client published packet: {:?}.", publish);
+
+                        // 3.3.4 PUBLISH Actions
+                        let topic_name = match publish.topic_alias {
+                            Some(topic_alias) if topic_alias == 0 || topic_alias > u16::MAX => {
+                                framed.send(MqttPacket::Disconnect(Disconnect {
+                                    disconnect_reason: DisconnectReason::TopicAliasInvalid,
+                                    server_reference: None,
+                                    session_expiry_interval: None,
+                                    user_properties: None,
+                                    reason_string: None,
+                                })).await?;
+                                return Ok(());
+                            },
+                            Some(topic_alias) if publish.topic_name.is_empty() => {
+                                if let Some(topic_name) = topic_alias_map.get(&topic_alias) {
+                                    topic_name
+                                } else {
+                                    framed.send(MqttPacket::Disconnect(Disconnect {
+                                        disconnect_reason: DisconnectReason::ProtocolError,
+                                        server_reference: None,
+                                        session_expiry_interval: None,
+                                        user_properties: None,
+                                        reason_string: None,
+                                    })).await?;
+                                    return Ok(());
+                                }
+                            },
+                            Some(topic_alias) => {
+                                topic_alias_map.insert(topic_alias, publish.topic_name.clone());
+                                &publish.topic_name
+                            },
+                            None if publish.topic_name.is_empty() => {
+                                framed.send(MqttPacket::Disconnect(Disconnect {
+                                    disconnect_reason: DisconnectReason::ProtocolError,
+                                    server_reference: None,
+                                    session_expiry_interval: None,
+                                    user_properties: None,
+                                    reason_string: None,
+                                })).await?;
+                                return Ok(());
+                            },
+                            None => &publish.topic_name,
+                        };
+
                         broker.subscription_message(
-                            &publish.topic_name,
+                            &topic_name,
                             IncomingMessage { publish: publish.clone() })
                         .await?;
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
+                        // TODO: handle session.
+
                         println!("client subscribed to: {:?}", subscribe.topic_filters);
 
                         let mut reasons = Vec::new();
@@ -310,7 +356,10 @@ async fn process<B: Broker>(
                         println!("error: {}", e);
                         return Ok(());
                     },
-                    None => return Ok(())
+                    None => {
+                        println!("client disconnected without disconnect packet.");
+                        return Ok(());
+                    }
                 }
             },
             client_message = rx.recv() => {

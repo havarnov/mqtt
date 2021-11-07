@@ -241,6 +241,8 @@ pub struct ConnAck {
 #[derive(Debug, PartialEq)]
 pub enum DisconnectReason {
     NormalDisconnection,
+    ProtocolError,
+    TopicAliasInvalid,
     SessionTakenOver, // TODO...
 }
 
