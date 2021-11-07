@@ -272,7 +272,8 @@ async fn process<B: Broker>(
 
                         // 3.3.4 PUBLISH Actions
                         let topic_name = match publish.topic_alias {
-                            Some(topic_alias) if topic_alias == 0 || topic_alias > u16::MAX => {
+                            // TODO: configure max topic_alias
+                            Some(topic_alias) if topic_alias == 0 => {
                                 framed.send(MqttPacket::Disconnect(Disconnect {
                                     disconnect_reason: DisconnectReason::TopicAliasInvalid,
                                     server_reference: None,
@@ -314,7 +315,7 @@ async fn process<B: Broker>(
                         };
 
                         broker.subscription_message(
-                            &topic_name,
+                            topic_name,
                             IncomingMessage { publish: publish.clone() })
                         .await?;
                     }
