@@ -398,5 +398,5 @@ macro_rules! parsing_should_fail_tests {
 }
 
 parsing_should_fail_tests! {
-    pingreq_with_non_empty_flags: (&[0b1100_0001u8, 0u8], nom::Err::Failure(MalformedPacket)),
+    pingreq_with_non_empty_flags: (&[0b1100_0001u8, 0u8], nom::Err::Failure(MalformedPacket("Parsing PingReq: can't have flags or packet size.".to_string()))),
 }
