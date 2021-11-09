@@ -18,7 +18,7 @@ use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::MqttPacketDecoder;
 use mqtt_protocol::types::{
     ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS, SubAck,
-    SubscribeReason,
+    Subscribe, SubscribeReason,
 };
 
 #[tokio::main]
@@ -103,7 +103,10 @@ impl Broker for StandardBroker {
         }
 
         for client in self.clients.iter() {
-            if client.send(ClientMessage::Publish(publish.clone())).is_err() {
+            if client
+                .send(ClientMessage::Publish(publish.clone()))
+                .is_err()
+            {
                 println!("TODO: client is disconnected an can't process any messages.")
             }
         }
@@ -172,98 +175,22 @@ async fn process<B: Broker>(
                     }
                     Some(Ok(MqttPacket::Publish(publish))) => {
                         println!("client published packet: {:?}.", publish);
-
-                        // 3.3.4 PUBLISH Actions
-                        let topic_name = match publish.topic_alias {
-                            // TODO: configure max topic_alias
-                            Some(topic_alias) if topic_alias == 0 => {
-                                framed.send(MqttPacket::Disconnect(Disconnect {
-                                    disconnect_reason: DisconnectReason::TopicAliasInvalid,
-                                    server_reference: None,
-                                    session_expiry_interval: None,
-                                    user_properties: None,
-                                    reason_string: None,
-                                })).await?;
-                                return Ok(());
-                            },
-                            Some(topic_alias) if publish.topic_name.is_empty() => {
-                                if let Some(topic_name) = topic_alias_map.get(&topic_alias) {
-                                    topic_name
-                                } else {
-                                    framed.send(MqttPacket::Disconnect(Disconnect {
-                                        disconnect_reason: DisconnectReason::ProtocolError,
-                                        server_reference: None,
-                                        session_expiry_interval: None,
-                                        user_properties: None,
-                                        reason_string: None,
-                                    })).await?;
-                                    return Ok(());
-                                }
-                            },
-                            Some(topic_alias) => {
-                                topic_alias_map.insert(topic_alias, publish.topic_name.clone());
-                                &publish.topic_name
-                            },
-                            None if publish.topic_name.is_empty() => {
-                                framed.send(MqttPacket::Disconnect(Disconnect {
-                                    disconnect_reason: DisconnectReason::ProtocolError,
-                                    server_reference: None,
-                                    session_expiry_interval: None,
-                                    user_properties: None,
-                                    reason_string: None,
-                                })).await?;
-                                return Ok(());
-                            },
-                            None => &publish.topic_name,
-                        };
-
-                        broker.publish(Arc::new(Publish { topic_name: topic_name.to_string(), ..publish })).await?;
+                        handle_publish(
+                            broker.deref(),
+                            &mut framed,
+                            &mut topic_alias_map,
+                            publish)
+                        .await?;
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
-                        // TODO: handle session.
-
-                        println!("client subscribed to: {:?}", subscribe.topic_filters);
-
-                        let mut reasons = Vec::new();
-                        for topic_filter in subscribe.topic_filters.iter() {
-
-                            // TODO: handle shared subscriptions.
-
-                            let t = TopicFilter::new(&topic_filter.filter);
-
-                            if t.is_err() {
-                                // TODO: invalid topic filter
-                                reasons.push(SubscribeReason::UnspecifiedError);
-                                continue;
-                            }
-
-                            subscriptions.insert(
-                                topic_filter.filter.clone(),
-                                ClientSubscription {
-                                    topic_filter: t.unwrap(),
-                                    subscription_identifier: subscribe.subscription_identifier,
-                                    maximum_qos: topic_filter.maximum_qos.clone(),
-                                    retain_as_published: topic_filter.retain_as_published,
-                                });
-
-                            let reason = match broker.new_subscription(
-                                    tx.clone(),
-                                    &TopicFilter::new(&topic_filter.filter).unwrap()).await {
-                                Ok(_) => SubscribeReason::GrantedQoS0,
-                                Err(_) => SubscribeReason::UnspecifiedError,
-                            };
-
-                            reasons.push(reason);
-                        }
-
-                        framed
-                            .send(MqttPacket::SubAck(SubAck {
-                                packet_identifier: subscribe.packet_identifier,
-                                reason_string: None,
-                                user_properties: None,
-                                reasons,
-                            }))
-                            .await?;
+                        println!("client sent subscribe packet: {:?}.", subscribe);
+                        handle_subscribe(
+                            broker.deref(),
+                            &mut framed,
+                            &mut subscriptions,
+                            tx.clone(),
+                            subscribe)
+                        .await?;
                     }
                     Some(Ok(_)) => {
                         unimplemented!("packet type not impl.")
@@ -356,6 +283,125 @@ async fn process<B: Broker>(
             },
         }
     }
+}
+
+async fn handle_subscribe<B: Broker>(
+    broker: &B,
+    framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+    subscriptions: &mut HashMap<String, ClientSubscription>,
+    tx: UnboundedSender<ClientMessage>,
+    subscribe: Subscribe,
+) -> Result<(), Box<dyn Error>> {
+    // TODO: handle session.
+
+    println!("client subscribed to: {:?}", subscribe.topic_filters);
+
+    let mut reasons = Vec::new();
+    for topic_filter in subscribe.topic_filters.iter() {
+        // TODO: handle shared subscriptions.
+
+        let t = TopicFilter::new(&topic_filter.filter);
+
+        if t.is_err() {
+            // TODO: invalid topic filter
+            reasons.push(SubscribeReason::UnspecifiedError);
+            continue;
+        }
+
+        subscriptions.insert(
+            topic_filter.filter.clone(),
+            ClientSubscription {
+                topic_filter: t.unwrap(),
+                subscription_identifier: subscribe.subscription_identifier,
+                maximum_qos: topic_filter.maximum_qos.clone(),
+                retain_as_published: topic_filter.retain_as_published,
+            },
+        );
+
+        let reason = match broker
+            .new_subscription(tx.clone(), &TopicFilter::new(&topic_filter.filter).unwrap())
+            .await
+        {
+            Ok(_) => SubscribeReason::GrantedQoS0,
+            Err(_) => SubscribeReason::UnspecifiedError,
+        };
+
+        reasons.push(reason);
+    }
+
+    framed
+        .send(MqttPacket::SubAck(SubAck {
+            packet_identifier: subscribe.packet_identifier,
+            reason_string: None,
+            user_properties: None,
+            reasons,
+        }))
+        .await?;
+    Ok(())
+}
+
+async fn handle_publish<B: Broker>(
+    broker: &B,
+    framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+    topic_alias_map: &mut HashMap<u16, String>,
+    publish: Publish,
+) -> Result<(), Box<dyn Error>> {
+    // 3.3.4 PUBLISH Actions
+    let topic_name = match publish.topic_alias {
+        // TODO: configure max topic_alias
+        Some(topic_alias) if topic_alias == 0 => {
+            framed
+                .send(MqttPacket::Disconnect(Disconnect {
+                    disconnect_reason: DisconnectReason::TopicAliasInvalid,
+                    server_reference: None,
+                    session_expiry_interval: None,
+                    user_properties: None,
+                    reason_string: None,
+                }))
+                .await?;
+            return Ok(());
+        }
+        Some(topic_alias) if publish.topic_name.is_empty() => {
+            if let Some(topic_name) = topic_alias_map.get(&topic_alias) {
+                topic_name
+            } else {
+                framed
+                    .send(MqttPacket::Disconnect(Disconnect {
+                        disconnect_reason: DisconnectReason::ProtocolError,
+                        server_reference: None,
+                        session_expiry_interval: None,
+                        user_properties: None,
+                        reason_string: None,
+                    }))
+                    .await?;
+                return Ok(());
+            }
+        }
+        Some(topic_alias) => {
+            topic_alias_map.insert(topic_alias, publish.topic_name.clone());
+            &publish.topic_name
+        }
+        None if publish.topic_name.is_empty() => {
+            framed
+                .send(MqttPacket::Disconnect(Disconnect {
+                    disconnect_reason: DisconnectReason::ProtocolError,
+                    server_reference: None,
+                    session_expiry_interval: None,
+                    user_properties: None,
+                    reason_string: None,
+                }))
+                .await?;
+            return Ok(());
+        }
+        None => &publish.topic_name,
+    };
+
+    broker
+        .publish(Arc::new(Publish {
+            topic_name: topic_name.to_string(),
+            ..publish
+        }))
+        .await
 }
 
 #[derive(Debug, Clone)]
