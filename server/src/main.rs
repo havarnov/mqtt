@@ -9,7 +9,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::codec::Framed;
@@ -44,10 +44,7 @@ trait Broker {
         _topic_filter: &TopicFilter,
     ) -> Result<(), Box<dyn Error>>;
 
-    async fn publish(
-        &self,
-        publish: Publish,
-    ) -> Result<(), Box<dyn Error>>;
+    async fn publish(&self, publish: Publish) -> Result<(), Box<dyn Error>>;
 }
 
 struct StandardBroker {
@@ -84,8 +81,11 @@ impl Broker for StandardBroker {
         _client_tx: UnboundedSender<ClientMessage>,
         _topic_filter: &TopicFilter,
     ) -> Result<(), Box<dyn Error>> {
-
-        for retained in self.retained.iter().filter(|r| _topic_filter.matches(&r.topic_name)) {
+        for retained in self
+            .retained
+            .iter()
+            .filter(|r| _topic_filter.matches(&r.topic_name))
+        {
             _client_tx.send(ClientMessage::Publish(retained.clone()))?;
         }
 
@@ -97,7 +97,8 @@ impl Broker for StandardBroker {
             if publish.payload.is_empty() {
                 self.retained.remove(&publish.topic_name);
             } else {
-                self.retained.insert(publish.topic_name.clone(), publish.clone());
+                self.retained
+                    .insert(publish.topic_name.clone(), publish.clone());
             }
         }
 

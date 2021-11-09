@@ -58,11 +58,11 @@ impl Decoder for MqttPacketDecoder {
             Err(nom::Err::Failure(err)) => {
                 println!("Something failed while parsing: {:?}", err);
                 Err(MqttPacketDecoderError {})
-            },
+            }
             other => {
                 println!("Something failed while parsing: {:?}", other);
                 Err(MqttPacketDecoderError {})
-            },
+            }
         }
     }
 }
