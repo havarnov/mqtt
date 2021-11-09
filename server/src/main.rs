@@ -44,12 +44,12 @@ trait Broker {
         _topic_filter: &TopicFilter,
     ) -> Result<(), Box<dyn Error>>;
 
-    async fn publish(&self, publish: Publish) -> Result<(), Box<dyn Error>>;
+    async fn publish(&self, publish: Arc<Publish>) -> Result<(), Box<dyn Error>>;
 }
 
 struct StandardBroker {
     clients: dashmap::DashMap<String, UnboundedSender<ClientMessage>>,
-    retained: dashmap::DashMap<String, Publish>,
+    retained: dashmap::DashMap<String, Arc<Publish>>,
 }
 
 #[async_trait]
@@ -92,7 +92,7 @@ impl Broker for StandardBroker {
         Ok(())
     }
 
-    async fn publish(&self, publish: Publish) -> Result<(), Box<dyn Error>> {
+    async fn publish(&self, publish: Arc<Publish>) -> Result<(), Box<dyn Error>> {
         if publish.retain {
             if publish.payload.is_empty() {
                 self.retained.remove(&publish.topic_name);
@@ -133,7 +133,7 @@ async fn listener<B: 'static + Broker + Send + Sync>(broker: Arc<B>) -> Result<(
 #[derive(Debug)]
 enum ClientMessage {
     SessionTakenOver(oneshot::Sender<()>),
-    Publish(Publish),
+    Publish(Arc<Publish>),
 }
 
 #[derive(Debug)]
@@ -217,7 +217,7 @@ async fn process<B: Broker>(
                             None => &publish.topic_name,
                         };
 
-                        broker.publish(Publish { topic_name: topic_name.to_string(), ..publish.clone() }).await?;
+                        broker.publish(Arc::new(Publish { topic_name: topic_name.to_string(), ..publish.clone() })).await?;
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
                         // TODO: handle session.
