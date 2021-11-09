@@ -217,7 +217,7 @@ async fn process<B: Broker>(
                             None => &publish.topic_name,
                         };
 
-                        broker.publish(Arc::new(Publish { topic_name: topic_name.to_string(), ..publish.clone() })).await?;
+                        broker.publish(Arc::new(Publish { topic_name: topic_name.to_string(), ..publish })).await?;
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
                         // TODO: handle session.
