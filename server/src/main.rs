@@ -18,7 +18,7 @@ use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::MqttPacketDecoder;
 use mqtt_protocol::types::{
     ConnAck, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS, SubAck,
-    Subscribe, SubscribeReason,
+    Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
 };
 
 #[tokio::main]
@@ -192,6 +192,25 @@ async fn process<B: Broker>(
                             subscribe)
                         .await?;
                     }
+                    Some(Ok(MqttPacket::Unsubscribe(unsubscribe))) => {
+                        println!("client sent unsubscribe packet: {:?}.", unsubscribe);
+
+                        let mut reasons = Vec::new();
+                        for unsubscribe_topic_filter in unsubscribe.topic_filters.iter() {
+                            if subscriptions.remove(unsubscribe_topic_filter).is_none() {
+                                reasons.push(UnsubscribeReason::NoSubscriptionExisted);
+                            } else {
+                                reasons.push(UnsubscribeReason::Success);
+                            }
+                        }
+
+                        framed.send(MqttPacket::UnsubAck(UnsubAck {
+                            packet_identifier: unsubscribe.packet_identifier,
+                            reason_string: None,
+                            user_properties: None,
+                            reasons,
+                        })).await?;
+                    }
                     Some(Ok(_)) => {
                         unimplemented!("packet type not impl.")
                     }
@@ -200,6 +219,7 @@ async fn process<B: Broker>(
                         return Ok(());
                     },
                     None => {
+                        // TODO: handle will
                         println!("client disconnected without disconnect packet.");
                         return Ok(());
                     }
