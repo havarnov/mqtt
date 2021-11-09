@@ -126,9 +126,7 @@ fn parse_binary_data(input: &[u8]) -> MqttParserResult<&[u8], &[u8]> {
 
 fn map_to_property<T, I>(option: &mut Option<T>, value: (I, T)) -> MqttParserResult<I, ()> {
     if option.is_some() {
-        Err(nom::Err::Failure(MalformedPacket(format!(
-            "Property is already set."
-        ))))
+        Err(nom::Err::Failure(MalformedPacket("Property is already set.".to_string())))
     } else {
         *option = Some(value.1);
         Ok((value.0, ()))

@@ -103,9 +103,8 @@ impl Broker for StandardBroker {
         }
 
         for client in self.clients.iter() {
-            match client.send(ClientMessage::Publish(publish.clone())) {
-                Ok(_) => (),
-                Err(_) => (),
+            if client.send(ClientMessage::Publish(publish.clone())).is_err() {
+                println!("TODO: client is disconnected an can't process any messages.")
             }
         }
 
@@ -232,7 +231,7 @@ async fn process<B: Broker>(
 
                             let t = TopicFilter::new(&topic_filter.filter);
 
-                            if let Err(_) = t {
+                            if t.is_err() {
                                 // TODO: invalid topic filter
                                 reasons.push(SubscribeReason::UnspecifiedError);
                                 continue;
@@ -327,7 +326,7 @@ async fn process<B: Broker>(
                             // Message Expiry Interval set to the received value minus the time that
                             // the Application Message has been waiting in the Server
                             // TODO: find out the difference between the time the message was received and the time it was sent
-                            let message_expiry_interval = publish.message_expiry_interval.map(|e| e - 0u32);
+                            // let message_expiry_interval = publish.message_expiry_interval.map(|e| e - 0u32);
 
                             let p = Publish {
                                 duplicate: false,
@@ -336,7 +335,7 @@ async fn process<B: Broker>(
                                 topic_name: publish.topic_name.clone(),
                                 packet_identifier,
                                 payload_format_indicator: publish.payload_format_indicator,
-                                message_expiry_interval,
+                                message_expiry_interval: publish.message_expiry_interval,
                                 topic_alias: None,
                                 response_topic: publish.response_topic.clone(),
                                 correlation_data: publish.correlation_data.clone(),
