@@ -18,7 +18,7 @@ use std::str;
 
 #[derive(Debug, PartialEq)]
 pub enum MqttParserError<I> {
-    MalformedPacket,
+    MalformedPacket(String),
     Nom(I, nom::error::ErrorKind),
 }
 
@@ -71,7 +71,7 @@ pub(in crate::codec) fn parse_string(input: &[u8]) -> MqttParserResult<&[u8], St
     let (rest, string_bytes) = take(length)(rest)?;
     match str::from_utf8(string_bytes) {
         Ok(str) => Ok((rest, str.to_owned())),
-        Err(_) => Err(nom::Err::Failure(MalformedPacket)),
+        Err(_) => Err(nom::Err::Failure(MalformedPacket("String is not valid UTF-8".to_owned()))),
     }
 }
 
@@ -86,10 +86,14 @@ pub(in crate::codec) fn parse_header(input: &[u8]) -> MqttParserResult<&[u8], Mq
         match bits::<_, _, _, nom::error::Error<_>, _>(parse_first_byte)(input) {
             Ok(res) => Ok(res),
             Err(nom::Err::Failure(_)) => {
-                return Err(nom::Err::Failure(MqttParserError::MalformedPacket))
+                return Err(nom::Err::Failure(MqttParserError::MalformedPacket(
+                    "First byte of header is malformed".to_owned(),
+                )));
             }
             Err(nom::Err::Error(_)) => {
-                return Err(nom::Err::Failure(MqttParserError::MalformedPacket))
+                return Err(nom::Err::Failure(MqttParserError::MalformedPacket(
+                    "First byte of header is malformed".to_owned(),
+                )));
             }
             Err(nom::Err::Incomplete(n)) => return Err(nom::Err::Incomplete(n)),
         }?;
@@ -120,7 +124,7 @@ fn parse_binary_data(input: &[u8]) -> MqttParserResult<&[u8], &[u8]> {
 
 fn map_to_property<T, I>(option: &mut Option<T>, value: (I, T)) -> MqttParserResult<I, ()> {
     if option.is_some() {
-        Err(nom::Err::Failure(MalformedPacket))
+        Err(nom::Err::Failure(MalformedPacket(format!("Property is already set."))))
     } else {
         *option = Some(value.1);
         Ok((value.0, ()))
@@ -131,11 +135,15 @@ fn parse_u8_as_bool(input: &[u8]) -> IResult<&[u8], bool, MqttParserError<&[u8]>
     match input[0] {
         0u8 => Ok((input, false)),
         1u8 => Ok((input, true)),
-        _ => Err(nom::Err::Failure(MalformedPacket)),
+        _ => Err(nom::Err::Failure(MalformedPacket("Only 0|1 are valid when parsing u8 to bool.".to_owned()))),
     }
 }
 
 fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
+    if input.is_empty() {
+        return Ok((input, Properties::default()));
+    }
+
     let (mut input, mut properties_length) = parse_variable_u32(input)?;
 
     let mut props = Properties::new();
@@ -209,8 +217,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
                 u32(Endianness::Big)(rest_next)?,
             ),
             code => {
-                println!("Received property code: {:?}", code);
-                Err(nom::Err::Failure(MalformedPacket))
+                Err(nom::Err::Failure(MalformedPacket(format!("Received property code: {:?}", code))))
             }
         }?;
 
@@ -225,7 +232,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
 fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
     let (input, protocol_name) = parse_string(input)?;
     if protocol_name != "MQTT" {
-        return Err(nom::Err::Failure(MalformedPacket));
+        return Err(nom::Err::Failure(MalformedPacket("Only 'MQTT' is valid protocol name.".to_owned())));
     }
 
     let (input, protocol_version) = take(1usize)(input)?;
@@ -243,10 +250,10 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
         {
             Ok(res) => Ok(res),
             Err(nom::Err::Failure(_)) => {
-                return Err(nom::Err::Failure(MqttParserError::MalformedPacket))
+                return Err(nom::Err::Failure(MqttParserError::MalformedPacket("Parsing first byte of Connect failed.".to_owned())));
             }
             Err(nom::Err::Error(_)) => {
-                return Err(nom::Err::Failure(MqttParserError::MalformedPacket))
+                return Err(nom::Err::Failure(MqttParserError::MalformedPacket("Parsing first byte of Connect failed.".to_owned())));
             }
             Err(nom::Err::Incomplete(n)) => return Err(nom::Err::Incomplete(n)),
         }?;
@@ -319,6 +326,18 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
 }
 
 fn parse_disconnect(input: &[u8]) -> MqttParserResult<&[u8], Disconnect> {
+    if input.is_empty() {
+        return Ok((
+            input,
+            Disconnect {
+                disconnect_reason: DisconnectReason::NormalDisconnection,
+                session_expiry_interval: None,
+                reason_string: None,
+                user_properties: None,
+                server_reference: None,
+            }));
+    }
+
     let (input, disconnect_reason) = take(1usize)(input)?;
     let disconnect_reason = match disconnect_reason[0] {
         0u8 => DisconnectReason::NormalDisconnection,
@@ -344,7 +363,7 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
         0u8 => QoS::AtMostOnce,
         1u8 => QoS::AtLeastOnce,
         2u8 => QoS::ExactlyOnce,
-        _ => return Err(nom::Err::Failure(MalformedPacket)),
+        _ => return Err(nom::Err::Failure(MalformedPacket("Only 0|1|2 is valid QoS values.".to_owned()))),
     };
     let retain = (flags & 0b0000_0001) == 0b0000_0001;
 
@@ -382,6 +401,7 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
 }
 
 fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Subscribe> {
+    println!("parse_subscribe: {}", packet_size);
     let len = input.len();
     let (input, packet_identifier) = u16(Endianness::Big)(input)?;
     let (mut input, properties) = parse_properties(input)?;
@@ -396,7 +416,7 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
             0u8 => QoS::AtMostOnce,
             1u8 => QoS::AtLeastOnce,
             2u8 => QoS::ExactlyOnce,
-            _ => return Err(nom::Err::Failure(MalformedPacket)),
+            _ => return Err(nom::Err::Failure(MalformedPacket("Only 0|1|2 is valid QoS values.".to_owned()))),
         };
 
         let no_local = options[0] & 0b0000_0100u8 == 0b0000_0100;
@@ -405,7 +425,7 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
             0u8 => RetainHandling::SendRetained,
             1u8 => RetainHandling::SendRetainedForNewSubscription,
             2u8 => RetainHandling::DoNotSendRetained,
-            _ => return Err(nom::Err::Failure(MalformedPacket)),
+            _ => return Err(nom::Err::Failure(MalformedPacket("Only 0|1|2 is valid RetainHandling values.".to_owned()))),
         };
 
         topic_filters.push(TopicFilter {
@@ -419,7 +439,7 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
         input = input_tmp;
         let advance = (len - input.len()) as u32;
         if advance > remaining {
-            return Err(nom::Err::Failure(MalformedPacket));
+            return Err(nom::Err::Failure(MalformedPacket("Subscribe parsing: advance > remaining.".to_string())));
         }
 
         remaining -= (len - input.len()) as u32;
@@ -444,7 +464,7 @@ fn parse_unsuback(packet_size: u32, rest: &[u8]) -> MqttParserResult<&[u8], Unsu
     let variable_header_len = len - rest.len();
     let remaining_len = packet_size - (variable_header_len as u32);
     if remaining_len == 0 {
-        return Err(nom::Err::Failure(MalformedPacket));
+        return Err(nom::Err::Failure(MalformedPacket("parsing unsuback: must have payload".to_string())));
     }
 
     let (rest, payload) = take(remaining_len)(rest)?;
@@ -458,7 +478,7 @@ fn parse_unsuback(packet_size: u32, rest: &[u8]) -> MqttParserResult<&[u8], Unsu
             135u8 => Ok(UnsubscribeReason::NotAuthorized),
             143u8 => Ok(UnsubscribeReason::TopicFilterInvalid),
             145u8 => Ok(UnsubscribeReason::PacketIdentifierInUse),
-            _ => Err(nom::Err::Failure(MalformedPacket)),
+            _ => Err(nom::Err::Failure(MalformedPacket("Failed to parse unsubscribe reason".to_string()))),
         })
         .collect::<Result<Vec<UnsubscribeReason>, _>>()?;
 
@@ -481,7 +501,7 @@ fn parse_unsubscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], 
     let variable_header_len = len - rest.len();
     let mut remaining_len = packet_size - (variable_header_len as u32);
     if remaining_len == 0 {
-        return Err(nom::Err::Failure(MalformedPacket));
+        return Err(nom::Err::Failure(MalformedPacket("parse unsubscribe: must have payload".to_string())));
     }
 
     let mut topic_filters = Vec::new();
@@ -515,7 +535,7 @@ fn parse_suback(packet_size: u32, rest: &[u8]) -> MqttParserResult<&[u8], SubAck
         .iter()
         .map(|i| match i {
             0u8 => Ok(SubscribeReason::GrantedQoS0),
-            _ => Err(nom::Err::Failure(MalformedPacket)),
+            _ => Err(nom::Err::Failure(MalformedPacket("Failed to parse SubscribeReason.".to_string()))),
         })
         .collect::<Result<Vec<SubscribeReason>, _>>()?;
 
@@ -557,7 +577,7 @@ fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
         156 => ConnectReason::UseAnotherServer,
         157 => ConnectReason::ServerMoved,
         159 => ConnectReason::ConnectionRateExceeded,
-        _ => return Err(nom::Err::Failure(MalformedPacket)),
+        _ => return Err(nom::Err::Failure(MalformedPacket("Failed to parse ConnectReason".to_string()))),
     };
 
     let (input, properties) = parse_properties(input)?;
@@ -597,21 +617,21 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
         11u8 => parse_unsuback(header.packet_size, rest)
             .map(|(r, unsuback)| (r, MqttPacket::UnsubAck(unsuback))),
         12u8 => {
-            if header.flags != 0u8 {
-                Err(nom::Err::Failure(MalformedPacket))
+            if header.flags != 0u8 || header.packet_size != 0u32 {
+                Err(nom::Err::Failure(MalformedPacket("Parsing PingReq: can't have flags or packet size.".to_string())))
             } else {
                 Ok((rest, MqttPacket::PingReq))
             }
         }
         13u8 => {
-            if header.flags != 0u8 {
-                Err(nom::Err::Failure(MalformedPacket))
+            if header.flags != 0u8 || header.packet_size != 0u32 {
+                Err(nom::Err::Failure(MalformedPacket("Parsing PingResp: can't have flags or packet size.".to_string())))
             } else {
                 Ok((rest, MqttPacket::PingResp))
             }
         }
         14u8 => map(parse_disconnect, MqttPacket::Disconnect)(rest),
-        _ => Err(nom::Err::Failure(MalformedPacket)),
+        unknown_packet_type => Err(nom::Err::Failure(MalformedPacket(format!("Unknown packet type: {}.", unknown_packet_type)))),
     }
 }
 

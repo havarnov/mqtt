@@ -20,7 +20,7 @@ impl From<std::io::Error> for MqttPacketDecoderError {
 
 impl Display for MqttPacketDecoderError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "foobar")
+        write!(f, "MqttPacketDecoderError: unknown.")
     }
 }
 
@@ -46,7 +46,7 @@ impl Decoder for MqttPacketDecoder {
             return Ok(None);
         }
 
-        println!("{:?}", src);
+        println!("incoming: {:?}", src.to_vec());
 
         match parse_mqtt(src) {
             Ok((rest, packet)) => {
@@ -55,8 +55,14 @@ impl Decoder for MqttPacketDecoder {
                 Ok(Some(packet))
             }
             Err(nom::Err::Incomplete(_)) => Ok(None),
-            Err(nom::Err::Failure(_)) => Err(MqttPacketDecoderError {}),
-            _ => Err(MqttPacketDecoderError {}),
+            Err(nom::Err::Failure(err)) => {
+                println!("Something failed while parsing: {:?}", err);
+                Err(MqttPacketDecoderError {})
+            },
+            other => {
+                println!("Something failed while parsing: {:?}", other);
+                Err(MqttPacketDecoderError {})
+            },
         }
     }
 }
