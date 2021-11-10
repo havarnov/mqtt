@@ -486,7 +486,7 @@ async fn handle_connect<B: Broker>(
                             connect_reason: ConnectReason::Success,
                             session_expiry_interval: None,
                             receive_maximum: None,
-                            maximum_qos: Some(0u8),
+                            maximum_qos: Some(QoS::AtMostOnce),
                             retain_available: None,
                             maximum_packet_size: None,
                             assigned_client_identifier: assigned,

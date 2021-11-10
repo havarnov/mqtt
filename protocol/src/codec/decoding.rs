@@ -135,10 +135,21 @@ fn map_to_property<T, I>(option: &mut Option<T>, value: (I, T)) -> MqttParserRes
     }
 }
 
+fn parse_qos(input: &[u8]) -> IResult<&[u8], QoS, MqttParserError<&[u8]>> {
+    match input[0] {
+        0 => Ok((&input[1..], QoS::AtMostOnce)),
+        1 => Ok((&input[1..], QoS::AtLeastOnce)),
+        2 => Ok((&input[1..], QoS::ExactlyOnce)),
+        _ => Err(nom::Err::Failure(MalformedPacket(
+            "QoS is malformed.".to_owned(),
+        ))),
+    }
+}
+
 fn parse_u8_as_bool(input: &[u8]) -> IResult<&[u8], bool, MqttParserError<&[u8]>> {
     match input[0] {
-        0u8 => Ok((input, false)),
-        1u8 => Ok((input, true)),
+        0u8 => Ok((&input[1..], false)),
+        1u8 => Ok((&input[1..], true)),
         _ => Err(nom::Err::Failure(MalformedPacket(
             "Only 0|1 are valid when parsing u8 to bool.".to_owned(),
         ))),
@@ -184,6 +195,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
                 &mut props.retain_available,
                 map_parser(take(1usize), parse_u8_as_bool)(rest_next)?,
             ),
+            19u32 => unimplemented!("Server Keep Alive"),
             21u32 => map_to_property(&mut props.authentication_method, parse_string(rest_next)?),
             22u32 => map_to_property(
                 &mut props.authentication_data,
@@ -201,12 +213,17 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
                 &mut props.request_response_information,
                 map_parser(take(1usize), parse_u8_as_bool)(rest_next)?,
             ),
+            26u32 => unimplemented!("Response Information"),
+            28u32 => unimplemented!("Server Reference"),
             31u32 => map_to_property(&mut props.reason_string, parse_string(rest_next)?),
             33u32 => map_to_property(&mut props.receive_maximum, u16(Endianness::Big)(rest_next)?),
             34u32 => map_to_property(
                 &mut props.topic_alias_maximum,
                 u16(Endianness::Big)(rest_next)?,
             ),
+            35u32 => unimplemented!("Topic Alias"),
+            36u32 => map_to_property(&mut props.maximum_qos, parse_qos(rest_next)?),
+            37u32 => unimplemented!("Retain Available"),
             38u32 => {
                 let (rest, s) = parse_string_pair(rest_next)?;
                 props
@@ -222,6 +239,9 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
                 &mut props.maximum_packet_size,
                 u32(Endianness::Big)(rest_next)?,
             ),
+            40u32 => unimplemented!("Wildcard Subscription Available"),
+            41u32 => unimplemented!("Subscription Identifier Available"),
+            42u32 => unimplemented!("Shared Subscription Available"),
             code => Err(nom::Err::Failure(MalformedPacket(format!(
                 "Received property code: {:?}",
                 code

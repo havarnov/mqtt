@@ -194,9 +194,9 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     }
 
     // 36
-    if let Some(maximum_qos) = properties.maximum_qos {
+    if let Some(maximum_qos) = properties.maximum_qos.as_ref() {
         payload.extend(&encode_variable_u32(36));
-        payload.push(maximum_qos);
+        payload.push(encode_qos(maximum_qos));
     }
 
     // 37
@@ -241,6 +241,14 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     let mut res = encode_variable_u32(payload.len() as u32);
     res.extend(&payload);
     res
+}
+
+fn encode_qos(qos: &QoS) -> u8 {
+    match qos {
+        QoS::AtMostOnce => 0,
+        QoS::AtLeastOnce => 1,
+        QoS::ExactlyOnce => 2,
+    }
 }
 
 fn encode_unsuback(unsuback: &UnsubAck) -> Vec<u8> {
@@ -303,7 +311,7 @@ fn encode_connack(connack: &ConnAck) -> Vec<u8> {
     let properties = Properties {
         session_expiry_interval: connack.session_expiry_interval,
         receive_maximum: connack.receive_maximum,
-        maximum_qos: connack.maximum_qos,
+        maximum_qos: connack.maximum_qos.clone(),
         retain_available: connack.retain_available,
         maximum_packet_size: connack.maximum_packet_size,
         assigned_client_identifier: connack.assigned_client_identifier.to_owned(),

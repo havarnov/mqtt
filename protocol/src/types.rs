@@ -60,7 +60,7 @@ pub struct Properties {
     // 35
     pub topic_alias: Option<u16>,
     // 36
-    pub maximum_qos: Option<u8>,
+    pub maximum_qos: Option<QoS>,
     // 37
     pub retain_available: Option<bool>,
     // 38
@@ -199,7 +199,7 @@ pub struct ConnAck {
     /// 3.2.2.3.4 Maximum QoS
     ///
     /// If a Server does not support QoS 1 or QoS 2 PUBLISH packets it MUST send a Maximum QoS in the CONNACK packet specifying the highest QoS it supports.
-    pub maximum_qos: Option<u8>,
+    pub maximum_qos: Option<QoS>,
 
     /// 3.2.2.3.5 Retain Available
     ///
