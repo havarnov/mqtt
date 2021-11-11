@@ -472,6 +472,14 @@ async fn handle_connect<B: Broker>(
                             assigned_client_identifier: None,
                             topic_alias_maximum: None,
                             user_properties: None,
+                            wildcard_subscription_available: None,
+                            subscription_identifiers_available: None,
+                            shared_subscription_available: None,
+                            server_keep_alive: None,
+                            response_information: None,
+                            server_reference: None,
+                            authentication_method: None,
+                            authentication_data: None,
                         })).await?;
 
                         println!("non clean start not supported");
@@ -493,6 +501,14 @@ async fn handle_connect<B: Broker>(
                             topic_alias_maximum: None,
                             reason_string: None,
                             user_properties: None,
+                            wildcard_subscription_available: None,
+                            subscription_identifiers_available: None,
+                            shared_subscription_available: None,
+                            server_keep_alive: None,
+                            response_information: None,
+                            server_reference: None,
+                            authentication_method: None,
+                            authentication_data: None,
                         }))
                         .await?;
 

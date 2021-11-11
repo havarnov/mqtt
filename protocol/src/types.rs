@@ -68,11 +68,11 @@ pub struct Properties {
     // 39
     pub maximum_packet_size: Option<u32>,
     // 40
-    pub wildcard_subscription_available: Option<u8>,
+    pub wildcard_subscription_available: Option<bool>,
     // 41
-    pub subscription_identifier_available: Option<u8>,
+    pub subscription_identifiers_available: Option<bool>,
     // 42
-    pub shared_subscription_available: Option<u8>,
+    pub shared_subscription_available: Option<bool>,
 }
 
 impl Properties {
@@ -236,6 +236,51 @@ pub struct ConnAck {
     /// The content and meaning of this property is not defined by this specification.
     /// The receiver of a CONNACK containing this property MAY ignore it.
     pub user_properties: Option<Vec<UserProperty>>,
+
+    /// 3.2.2.3.11 Wildcard Subscription Available
+    ///
+    /// If present, this declares whether the Server supports Wildcard Subscriptions.
+    /// If not present, then Wildcard Subscriptions are supported.
+    pub wildcard_subscription_available: Option<bool>,
+
+    /// 3.2.2.3.12 Subscription Identifiers Available
+    ///
+    /// If present, this byte declares whether the Server supports Subscription Identifiers.
+    /// If not present, then Subscription Identifiers are supported.
+    pub subscription_identifiers_available: Option<bool>,
+
+    /// 3.2.2.3.13 Shared Subscription Available
+    ///
+    /// If present, this declares whether the Server supports Shared Subscriptions.
+    /// If not present, then Shared Subscriptions are supported.
+    pub shared_subscription_available: Option<bool>,
+
+    /// 3.2.2.3.14 Server Keep Alive
+    ///
+    /// If the Server sends a Server Keep Alive on the CONNACK packet, the Client MUST use this value instead of the Keep Alive value the Client sent on CONNECT.
+    /// If the Server does not send the Server Keep Alive, the Server MUST use the Keep Alive value set by the Client on CONNECT.
+    pub server_keep_alive: Option<u16>,
+
+    /// 3.2.2.3.15 Response Information
+    ///
+    /// Used as the basis for creating a Response Topic.
+    pub response_information: Option<String>,
+
+    /// 3.2.2.3.16 Server Reference
+    ///
+    /// Can be used by the Client to identify another Server to use.
+    pub server_reference: Option<String>,
+
+    /// 3.2.2.3.17 Authentication Method
+    ///
+    /// Containing the name of the authentication method.
+    pub authentication_method: Option<String>,
+
+    /// 3.2.2.3.18 Authentication Data
+    ///
+    /// Containing the authentication data.
+    /// The contents of this data are defined by the authentication method and the state of already exchanged authentication data.
+    pub authentication_data: Option<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq)]

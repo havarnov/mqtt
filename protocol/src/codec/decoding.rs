@@ -656,6 +656,14 @@ fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
             topic_alias_maximum: properties.topic_alias_maximum,
             reason_string: properties.reason_string,
             user_properties: properties.user_property,
+            wildcard_subscription_available: properties.wildcard_subscription_available,
+            subscription_identifiers_available: properties.subscription_identifiers_available,
+            shared_subscription_available: properties.shared_subscription_available,
+            server_keep_alive: properties.server_keep_alive,
+            response_information: properties.response_information,
+            server_reference: properties.server_reference,
+            authentication_method: properties.authentication_method,
+            authentication_data: properties.authentication_data,
         },
     ))
 }

@@ -31,6 +31,13 @@ fn encode_connect_reason(reason: &ConnectReason) -> u8 {
     }
 }
 
+fn encode_bool(value: bool) -> u8 {
+    match value {
+        true => 1,
+        false => 0,
+    }
+}
+
 fn encode_variable_u32(mut value: u32) -> Vec<u8> {
     let mut res = vec![];
     loop {
@@ -223,19 +230,19 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     // 40
     if let Some(wildcard_subscription_available) = properties.wildcard_subscription_available {
         payload.extend(&encode_variable_u32(40));
-        payload.push(wildcard_subscription_available);
+        payload.push(encode_bool(wildcard_subscription_available));
     }
 
     // 41
-    if let Some(subscription_identifier_available) = properties.subscription_identifier_available {
+    if let Some(subscription_identifier_available) = properties.subscription_identifiers_available {
         payload.extend(&encode_variable_u32(41));
-        payload.push(subscription_identifier_available);
+        payload.push(encode_bool(subscription_identifier_available));
     }
 
     // 42
     if let Some(shared_subscription_available) = properties.shared_subscription_available {
         payload.extend(&encode_variable_u32(42));
-        payload.push(shared_subscription_available);
+        payload.push(encode_bool(shared_subscription_available));
     }
 
     let mut res = encode_variable_u32(payload.len() as u32);
