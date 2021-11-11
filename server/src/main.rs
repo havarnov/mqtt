@@ -21,6 +21,9 @@ use mqtt_protocol::types::{
     Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
 };
 
+// TODO: consts that should be configurable
+const MAX_KEEP_ALIVE: u16 = 60;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let broker = Arc::new(StandardBroker {
@@ -156,7 +159,7 @@ async fn process<B: Broker>(
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let _client_identifier = handle_connect(&mut framed, broker.deref(), tx.clone()).await?;
+    let _connect_information = handle_connect(&mut framed, broker.deref(), tx.clone()).await?;
 
     let mut topic_alias_map = HashMap::new();
     let mut subscriptions = HashMap::new();
@@ -438,20 +441,31 @@ impl std::fmt::Display for ClientHandlerError {
 
 impl std::error::Error for ClientHandlerError {}
 
+struct ConnectInformation {
+    client_identifier: String,
+    keep_alive: u16,
+}
+
 async fn handle_connect<B: Broker>(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
     broker: &B,
     client_tx: UnboundedSender<ClientMessage>,
-) -> Result<String, Box<dyn Error>> {
+) -> Result<ConnectInformation, Box<dyn Error>> {
     // handle connection
     let connection_timeout = sleep(Duration::from_millis(20000));
     tokio::select! {
         packet = framed.next() =>
             match packet {
-                Some(Ok(MqttPacket::Connect(c))) => {
-                    println!("{:?}", c);
+                Some(Ok(MqttPacket::Connect(connect))) => {
+                    println!("{:?}", connect);
 
-                    let assigned = if c.client_identifier.is_empty() {
+                    let server_keep_alive = if connect.keep_alive == 0 || connect.keep_alive > MAX_KEEP_ALIVE {
+                        Some(MAX_KEEP_ALIVE)
+                    } else {
+                        None
+                    };
+
+                    let assigned = if connect.client_identifier.is_empty() {
                         // TODO: assign a server generated client identifier.
                         println!("client identifier is empty");
                         Some(format!("{}", rand::random::<u128>()))
@@ -459,7 +473,7 @@ async fn handle_connect<B: Broker>(
                         None
                     };
 
-                    if !c.clean_start {
+                    if !connect.clean_start {
                         framed.send(MqttPacket::ConnAck(ConnAck {
                             connect_reason: ConnectReason::ImplementationSpecificError,
                             reason_string: Some("Session not supported".to_string()),
@@ -486,7 +500,7 @@ async fn handle_connect<B: Broker>(
                         return Err(Box::new(ClientHandlerError::ConnectError));
                     }
 
-                    broker.incoming_connect(assigned.as_ref().unwrap_or(&c.client_identifier), client_tx).await;
+                    broker.incoming_connect(assigned.as_ref().unwrap_or(&connect.client_identifier), client_tx).await;
 
                     framed
                         .send(MqttPacket::ConnAck(ConnAck {
@@ -497,14 +511,14 @@ async fn handle_connect<B: Broker>(
                             maximum_qos: Some(QoS::AtMostOnce),
                             retain_available: None,
                             maximum_packet_size: None,
-                            assigned_client_identifier: assigned,
+                            assigned_client_identifier: assigned.clone(),
                             topic_alias_maximum: None,
                             reason_string: None,
                             user_properties: None,
                             wildcard_subscription_available: None,
                             subscription_identifiers_available: None,
                             shared_subscription_available: None,
-                            server_keep_alive: None,
+                            server_keep_alive,
                             response_information: None,
                             server_reference: None,
                             authentication_method: None,
@@ -512,7 +526,10 @@ async fn handle_connect<B: Broker>(
                         }))
                         .await?;
 
-                        Ok(c.client_identifier)
+                        Ok(ConnectInformation {
+                            client_identifier: assigned.unwrap_or(connect.client_identifier),
+                            keep_alive: server_keep_alive.unwrap_or(connect.keep_alive),
+                        })
                 }
                 a => {
                     println!("Connection error: {:?}", a);
