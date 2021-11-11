@@ -325,6 +325,14 @@ fn encode_connack(connack: &ConnAck) -> Vec<u8> {
         topic_alias_maximum: connack.topic_alias_maximum,
         reason_string: connack.reason_string.to_owned(),
         user_property: connack.user_properties.clone(),
+        wildcard_subscription_available: connack.wildcard_subscription_available,
+        subscription_identifiers_available: connack.subscription_identifiers_available,
+        shared_subscription_available: connack.shared_subscription_available,
+        server_keep_alive: connack.server_keep_alive,
+        response_information: connack.response_information.to_owned(),
+        server_reference: connack.server_reference.to_owned(),
+        authentication_method: connack.authentication_method.to_owned(),
+        authentication_data: connack.authentication_data.to_owned(),
         ..Default::default()
     };
 

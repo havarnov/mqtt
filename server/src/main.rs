@@ -159,14 +159,37 @@ async fn process<B: Broker>(
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let _connect_information = handle_connect(&mut framed, broker.deref(), tx.clone()).await?;
+    let connect_information = handle_connect(&mut framed, broker.deref(), tx.clone()).await?;
 
     let mut topic_alias_map = HashMap::new();
     let mut subscriptions = HashMap::new();
 
+    let mut since_last: tokio::time::Instant = tokio::time::Instant::now();
+    let mut keep_alive_timeout: tokio::time::Sleep;
+    let mut keep_alive_timeout_duration: Duration = Duration::from_secs(connect_information.keep_alive as u64);
+
     loop {
+        keep_alive_timeout = sleep(keep_alive_timeout_duration);
+
         tokio::select! {
+            _ = keep_alive_timeout => {
+                // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901045
+                // 3.1.2.10 Keep Alive
+                // If the Keep Alive value is non-zero and the Server does not receive an MQTT Control Packet
+                // from the Client within one and a half times the Keep Alive time period, it MUST close the
+                // Network Connection to the Client as if the network had failed.
+                if since_last.elapsed().as_secs_f64() > (connect_information.keep_alive as f64 * 1.5) {
+                    return Err(Box::new(ClientHandlerError::KeepAliveTimeout));
+                }
+
+                keep_alive_timeout_duration = match (connect_information.keep_alive as f64 * 1.5) - since_last.elapsed().as_secs_f64() {
+                    x if x < 0.0 => Duration::from_secs(0),
+                    x => Duration::from_secs(x as u64),
+                };
+            },
             packet = framed.next() => {
+                since_last = tokio::time::Instant::now();
+
                 match packet {
                     Some(Ok(MqttPacket::PingReq)) => {
                         println!("ping received.");
@@ -431,6 +454,7 @@ async fn handle_publish<B: Broker>(
 enum ClientHandlerError {
     ConnectError,
     DisconnectError,
+    KeepAliveTimeout,
 }
 
 impl std::fmt::Display for ClientHandlerError {
@@ -442,7 +466,7 @@ impl std::fmt::Display for ClientHandlerError {
 impl std::error::Error for ClientHandlerError {}
 
 struct ConnectInformation {
-    client_identifier: String,
+    _client_identifier: String,
     keep_alive: u16,
 }
 
@@ -527,7 +551,7 @@ async fn handle_connect<B: Broker>(
                         .await?;
 
                         Ok(ConnectInformation {
-                            client_identifier: assigned.unwrap_or(connect.client_identifier),
+                            _client_identifier: assigned.unwrap_or(connect.client_identifier),
                             keep_alive: server_keep_alive.unwrap_or(connect.keep_alive),
                         })
                 }
