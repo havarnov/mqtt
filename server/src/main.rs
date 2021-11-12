@@ -1,3 +1,4 @@
+mod session;
 mod topic_filter;
 
 use async_trait::async_trait;
@@ -14,6 +15,7 @@ use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::codec::Framed;
 
+use crate::session::{MemorySessionStorage, Session, SessionStorage};
 use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::MqttPacketDecoder;
 use mqtt_protocol::types::{
@@ -29,12 +31,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let broker = Arc::new(StandardBroker {
         clients: dashmap::DashMap::new(),
         retained: dashmap::DashMap::new(),
+        session_storage: MemorySessionStorage::new(),
     });
     listener(broker.clone()).await
 }
 
 #[async_trait]
 trait Broker {
+    type S: SessionStorage;
+
+    async fn get_session_storage(&self) -> &Self::S;
+
     async fn incoming_connect(
         &self,
         client_identifier: &str,
@@ -53,10 +60,17 @@ trait Broker {
 struct StandardBroker {
     clients: dashmap::DashMap<String, UnboundedSender<ClientMessage>>,
     retained: dashmap::DashMap<String, Arc<Publish>>,
+    session_storage: MemorySessionStorage,
 }
 
 #[async_trait]
 impl Broker for StandardBroker {
+    type S = MemorySessionStorage;
+
+    async fn get_session_storage(&self) -> &Self::S {
+        &self.session_storage
+    }
+
     #[allow(clippy::async_yields_async)]
     async fn incoming_connect(
         &self,
@@ -499,6 +513,13 @@ async fn handle_connect<B: Broker>(
                     };
 
                     if !connect.clean_start {
+
+                        let session = broker.get_session_storage().await.get(&connect.client_identifier).await;
+
+                        if let Some(mut session) = session {
+                            session.set_discarded_instant(None).await;
+                        }
+
                         framed.send(MqttPacket::ConnAck(ConnAck {
                             connect_reason: ConnectReason::ImplementationSpecificError,
                             reason_string: Some("Session not supported".to_string()),
