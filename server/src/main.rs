@@ -166,7 +166,8 @@ async fn process<B: Broker>(
 
     let mut since_last: tokio::time::Instant = tokio::time::Instant::now();
     let mut keep_alive_timeout: tokio::time::Sleep;
-    let mut keep_alive_timeout_duration: Duration = Duration::from_secs(connect_information.keep_alive as u64);
+    let mut keep_alive_timeout_duration: Duration =
+        Duration::from_secs(connect_information.keep_alive as u64);
 
     loop {
         keep_alive_timeout = sleep(keep_alive_timeout_duration);

@@ -227,7 +227,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
             38u32 => {
                 let (rest, s) = parse_string_pair(rest_next)?;
                 props
-                    .user_property
+                    .user_properties
                     .get_or_insert(vec![])
                     .push(UserProperty {
                         key: s.0,
@@ -315,7 +315,7 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
                 content_type: will_properties.content_type,
                 response_topic: will_properties.response_topic,
                 correlation_data: will_properties.correlation_data,
-                user_properties: will_properties.user_property,
+                user_properties: will_properties.user_properties,
             }),
         )
     } else {
@@ -351,7 +351,7 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
             topic_alias_maximum: properties.topic_alias_maximum,
             request_response_information: properties.request_response_information,
             request_problem_information: properties.request_problem_information,
-            user_properties: properties.user_property,
+            user_properties: properties.user_properties,
             authentication_method: properties.authentication_method,
             authentication_data: properties.authentication_data,
         },
@@ -385,7 +385,7 @@ fn parse_disconnect(input: &[u8]) -> MqttParserResult<&[u8], Disconnect> {
             disconnect_reason,
             session_expiry_interval: properties.session_expiry_interval,
             reason_string: properties.reason_string,
-            user_properties: properties.user_property,
+            user_properties: properties.user_properties,
             server_reference: properties.server_reference,
         },
     ))
@@ -429,7 +429,7 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
             topic_alias: properties.topic_alias,
             response_topic: properties.response_topic,
             correlation_data: properties.correlation_data,
-            user_properties: properties.user_property,
+            user_properties: properties.user_properties,
             subscription_identifier: properties.subscription_identifier,
             content_type: properties.content_type,
             // payload
@@ -498,7 +498,7 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
         Subscribe {
             packet_identifier,
             subscription_identifier: properties.subscription_identifier,
-            user_properties: properties.user_property,
+            user_properties: properties.user_properties,
             topic_filters,
         },
     ))
@@ -539,7 +539,7 @@ fn parse_unsuback(packet_size: u32, rest: &[u8]) -> MqttParserResult<&[u8], Unsu
         UnsubAck {
             packet_identifier,
             reason_string: properties.reason_string.to_owned(),
-            user_properties: properties.user_property,
+            user_properties: properties.user_properties,
             reasons,
         },
     ))
@@ -570,7 +570,7 @@ fn parse_unsubscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], 
         rest,
         Unsubscribe {
             packet_identifier,
-            user_properties: properties.user_property,
+            user_properties: properties.user_properties,
             topic_filters,
         },
     ))
@@ -600,7 +600,7 @@ fn parse_suback(packet_size: u32, rest: &[u8]) -> MqttParserResult<&[u8], SubAck
         SubAck {
             packet_identifier,
             reason_string: properties.reason_string,
-            user_properties: properties.user_property,
+            user_properties: properties.user_properties,
             reasons,
         },
     ))
@@ -655,7 +655,7 @@ fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
             assigned_client_identifier: properties.assigned_client_identifier,
             topic_alias_maximum: properties.topic_alias_maximum,
             reason_string: properties.reason_string,
-            user_properties: properties.user_property,
+            user_properties: properties.user_properties,
             wildcard_subscription_available: properties.wildcard_subscription_available,
             subscription_identifiers_available: properties.subscription_identifiers_available,
             shared_subscription_available: properties.shared_subscription_available,

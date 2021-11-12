@@ -17,61 +17,88 @@ pub enum MqttPacket {
     Auth, // TODO: impl decode/encode
 }
 
+/// All possible MQTT properties
 #[derive(Debug, PartialEq, Default)]
 pub struct Properties {
-    // 1
+    /// Payload Format Indicator (0x01) - Byte
     pub payload_format_indicator: Option<u8>,
-    // 2
+
+    /// Message Expiry Interval (0x02) - Four Byte Integer
     pub message_expiry_interval: Option<u32>,
-    // 3
+
+    /// Content Type (0x03) - UTF-8 Encoded String
     pub content_type: Option<String>,
-    // 8
+
+    /// Response Topic (0x08) - UTF-8 Encoded String
     pub response_topic: Option<String>,
-    // 9
+
+    /// Correlation Data (0x09) - Binary Data
     pub correlation_data: Option<Vec<u8>>,
-    // 11
+
+    /// Subscription Identifier (0x0B) - Variable Byte Integer
     pub subscription_identifier: Option<u32>,
-    // 17
+
+    /// Session Expiry Interval (0x11) - Four Byte Integer
     pub session_expiry_interval: Option<u32>,
-    // 18
+
+    /// Assigned Client Identifier (0x12) - UTF-8 Encoded String
     pub assigned_client_identifier: Option<String>,
-    // 19
+
+    /// Server Keep Alive (0x13) - Two Byte Integer
     pub server_keep_alive: Option<u16>,
-    // 21
+
+    /// Authentication Method (0x15) - UTF-8 Encoded String
     pub authentication_method: Option<String>,
-    // 22
+
+    /// Authentication Data (0x16) - Binary Data
     pub authentication_data: Option<Vec<u8>>,
-    // 23
+
+    /// Request Problem Information (0x17) - Byte
     pub request_problem_information: Option<bool>,
-    // 24
+
+    /// Will Delay Interval (0x18) - Four Byte Integer
     pub will_delay_interval: Option<u32>,
-    // 25
+
+    /// Request Response Information (0x19) - Byte
     pub request_response_information: Option<bool>,
-    // 26
+
+    /// Response Information (0x1A) - UTF-8 Encoded String
     pub response_information: Option<String>,
-    // 28
+
+    /// Server Reference (0x1C) - UTF-8 Encoded String
     pub server_reference: Option<String>,
-    // 31
+
+    /// Reason String (0x1F) - UTF-8 Encoded String
     pub reason_string: Option<String>,
-    // 33
+
+    /// Receive Maximum (0x21) - Two Byte Integer
     pub receive_maximum: Option<u16>,
-    // 34
+
+    /// Topic Alias Maximum (0x22) - Two Byte Integer
     pub topic_alias_maximum: Option<u16>,
-    // 35
+
+    /// Topic Alias (0x23) - Two Byte Integer
     pub topic_alias: Option<u16>,
-    // 36
+
+    /// Maximum QoS (0x24) - Byte
     pub maximum_qos: Option<QoS>,
-    // 37
+
+    /// Retain Available (0x25) - Byte
     pub retain_available: Option<bool>,
-    // 38
-    pub user_property: Option<Vec<UserProperty>>,
-    // 39
+
+    /// User Property (0x26) - UTF-8 String Pair
+    pub user_properties: Option<Vec<UserProperty>>,
+
+    /// Maximum Packet Size (0x27) - Four Byte Integer
     pub maximum_packet_size: Option<u32>,
-    // 40
+
+    /// Wildcard Subscription Available (0x28) - Byte
     pub wildcard_subscription_available: Option<bool>,
-    // 41
+
+    /// Subscription Identifier Available (0x29) - Byte
     pub subscription_identifiers_available: Option<bool>,
-    // 42
+
+    /// Shared Subscription Available (0x2A) - Byte
     pub shared_subscription_available: Option<bool>,
 }
 

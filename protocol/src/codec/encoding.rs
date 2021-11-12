@@ -213,7 +213,7 @@ fn encode_properties(properties: &Properties) -> Vec<u8> {
     }
 
     // 38
-    if let Some(user_properties) = &properties.user_property {
+    if let Some(user_properties) = &properties.user_properties {
         for user_property in user_properties {
             payload.extend(&encode_variable_u32(38));
             payload.extend(&encode_string(&user_property.key));
@@ -264,7 +264,7 @@ fn encode_unsuback(unsuback: &UnsubAck) -> Vec<u8> {
 
     let properties = Properties {
         reason_string: unsuback.reason_string.to_owned(),
-        user_property: unsuback.user_properties.to_owned(),
+        user_properties: unsuback.user_properties.to_owned(),
         ..Default::default()
     };
     variable_header_and_payload.extend(&encode_properties(&properties));
@@ -299,7 +299,7 @@ fn encode_disconnect(disconnect: &Disconnect) -> Vec<u8> {
     let properties = Properties {
         session_expiry_interval: disconnect.session_expiry_interval,
         reason_string: disconnect.reason_string.to_owned(),
-        user_property: disconnect.user_properties.to_owned(),
+        user_properties: disconnect.user_properties.to_owned(),
         server_reference: disconnect.server_reference.to_owned(),
         ..Default::default()
     };
@@ -324,7 +324,7 @@ fn encode_connack(connack: &ConnAck) -> Vec<u8> {
         assigned_client_identifier: connack.assigned_client_identifier.to_owned(),
         topic_alias_maximum: connack.topic_alias_maximum,
         reason_string: connack.reason_string.to_owned(),
-        user_property: connack.user_properties.clone(),
+        user_properties: connack.user_properties.clone(),
         wildcard_subscription_available: connack.wildcard_subscription_available,
         subscription_identifiers_available: connack.subscription_identifiers_available,
         shared_subscription_available: connack.shared_subscription_available,
@@ -357,7 +357,7 @@ fn encode_subscribe(subscribe: &Subscribe) -> Vec<u8> {
     variable_header_and_payload.extend(subscribe.packet_identifier.to_be_bytes());
     let properties = Properties {
         subscription_identifier: subscribe.subscription_identifier,
-        user_property: subscribe.user_properties.to_owned(),
+        user_properties: subscribe.user_properties.to_owned(),
         ..Default::default()
     };
     variable_header_and_payload.extend(&encode_properties(&properties));
@@ -402,7 +402,7 @@ fn encode_unsubscribe(unsubscribe: &Unsubscribe) -> Vec<u8> {
     let mut variable_header_and_payload = vec![];
     variable_header_and_payload.extend(unsubscribe.packet_identifier.to_be_bytes());
     let properties = Properties {
-        user_property: unsubscribe.user_properties.to_owned(),
+        user_properties: unsubscribe.user_properties.to_owned(),
         ..Default::default()
     };
     variable_header_and_payload.extend(&encode_properties(&properties));
@@ -426,7 +426,7 @@ fn encode_suback(suback: &SubAck) -> Vec<u8> {
 
     let properties = Properties {
         reason_string: suback.reason_string.to_owned(),
-        user_property: suback.user_properties.to_owned(),
+        user_properties: suback.user_properties.to_owned(),
         ..Default::default()
     };
     variable_header_and_payload.extend(&encode_properties(&properties));
@@ -474,7 +474,7 @@ fn encode_publish(publish: &Publish) -> Vec<u8> {
         topic_alias: publish.topic_alias,
         response_topic: publish.response_topic.to_owned(),
         correlation_data: publish.correlation_data.to_owned(),
-        user_property: publish.user_properties.to_owned(),
+        user_properties: publish.user_properties.to_owned(),
         subscription_identifier: publish.subscription_identifier,
         content_type: publish.content_type.to_owned(),
         ..Default::default()
@@ -546,7 +546,7 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
         topic_alias_maximum: connect.topic_alias_maximum,
         request_response_information: connect.request_response_information,
         request_problem_information: connect.request_problem_information,
-        user_property: connect.user_properties.to_owned(),
+        user_properties: connect.user_properties.to_owned(),
         ..Default::default()
     };
     variable_header.extend(&encode_properties(&properties));
@@ -564,7 +564,7 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
             content_type: will.content_type.to_owned(),
             response_topic: will.response_topic.to_owned(),
             correlation_data: will.correlation_data.to_owned(),
-            user_property: will.user_properties.to_owned(),
+            user_properties: will.user_properties.to_owned(),
             ..Default::default()
         };
         payload.extend(&encode_properties(&will_properties));
