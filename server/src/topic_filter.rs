@@ -147,6 +147,8 @@ mod tests {
     }
 
     valid_topic_filter! {
+        empty: "",
+        slash_only: "/",
         normal_single: "sport/+/player1",
         single_single: "+",
         single_multi_combined: "+/tennis/#",
