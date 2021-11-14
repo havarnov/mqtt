@@ -15,7 +15,7 @@ use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::codec::Framed;
 
-use crate::session::{MemorySessionStorage, Session, SessionStorage};
+use crate::session::{MemorySessionStorage, SessionStorage};
 use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::MqttPacketDecoder;
 use mqtt_protocol::types::{
@@ -517,7 +517,8 @@ async fn handle_connect<B: Broker>(
                         let session = broker.get_session_storage().await.get(&connect.client_identifier).await;
 
                         if let Some(mut session) = session {
-                            session.set_discarded_instant(None).await;
+                            session.discarded_at = None;
+                            broker.get_session_storage().await.upsert(&assigned.unwrap_or(connect.client_identifier), session).await?;
                         }
 
                         framed.send(MqttPacket::ConnAck(ConnAck {

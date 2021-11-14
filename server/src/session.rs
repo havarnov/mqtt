@@ -1,11 +1,8 @@
 use async_trait::async_trait;
-use std::error::Error;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
-pub(crate) enum SessionError {
-    AlreadySet,
+pub enum SessionError {
+    ETagMismatch,
 }
 
 impl std::fmt::Display for SessionError {
@@ -16,31 +13,20 @@ impl std::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
-#[async_trait]
-pub trait Session: Send + Sync {
-    async fn set_discarded_instant(&mut self, unix_time: Option<u64>);
+#[derive(Clone)]
+pub struct Session {
+    e_tag: Option<String>,
+    pub discarded_at: Option<u64>,
 }
 
 #[async_trait]
 pub trait SessionStorage: Send + Sync {
-    type S: Session;
-    async fn get(&self, client_id: &str) -> Option<Self::S>;
-    async fn insert(&mut self, client_id: &str, session: Self::S) -> Result<(), Box<dyn Error>>;
-}
-
-pub struct MemorySession {
-    discarded_at: Option<u64>,
-}
-
-#[async_trait]
-impl Session for Arc<RwLock<MemorySession>> {
-    async fn set_discarded_instant(&mut self, unix_time: Option<u64>) {
-        self.write().await.discarded_at = unix_time;
-    }
+    async fn get(&self, client_id: &str) -> Option<Session>;
+    async fn upsert(&self, client_id: &str, session: Session) -> Result<(), SessionError>;
 }
 
 pub struct MemorySessionStorage {
-    sessions: dashmap::DashMap<String, Arc<RwLock<MemorySession>>>,
+    sessions: dashmap::DashMap<String, Session>,
 }
 
 impl MemorySessionStorage {
@@ -53,15 +39,20 @@ impl MemorySessionStorage {
 
 #[async_trait]
 impl SessionStorage for MemorySessionStorage {
-    type S = Arc<RwLock<MemorySession>>;
-
-    async fn get(&self, client_id: &str) -> Option<Self::S> {
+    async fn get(&self, client_id: &str) -> Option<Session> {
         self.sessions.get(client_id).map(|s| s.clone())
     }
 
-    async fn insert(&mut self, client_id: &str, session: Self::S) -> Result<(), Box<dyn Error>> {
+    async fn upsert(&self, client_id: &str, session: Session) -> Result<(), SessionError> {
         match self.sessions.entry(client_id.to_string()) {
-            dashmap::mapref::entry::Entry::Occupied(_) => Err(Box::new(SessionError::AlreadySet)),
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if entry.get().e_tag != session.e_tag {
+                    Err(SessionError::ETagMismatch)
+                } else {
+                    entry.insert(session);
+                    Ok(())
+                }
+            }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
                 entry.insert(session);
                 Ok(())
