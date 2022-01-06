@@ -8,14 +8,14 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_util::codec::Framed;
 
-use crate::session::{MemorySessionStorage, SessionStorage};
+use crate::session::{MemorySessionStorage, Session, SessionStorage};
 use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::MqttPacketDecoder;
 use mqtt_protocol::types::{
@@ -512,19 +512,39 @@ async fn handle_connect<B: Broker>(
                         None
                     };
 
+                    let is_assigned = assigned.is_some();
+                    let client_identifier = assigned.unwrap_or(connect.client_identifier);
+
+                    // TODO: handle that removed client should not miss any packages due to incoming connection.
+                    // Not exactly relevant, but from 3.8.4 SUBSCRIBE Actions:
+                    // If a Server receives a SUBSCRIBE packet containing a Topic Filter that is identical to a Non‑shared Subscription’s Topic Filter for the current Session,
+                    // then it MUST replace that existing Subscription with a new Subscription [MQTT-3.8.4-3].
+                    // The Topic Filter in the new Subscription will be identical to that in the previous Subscription, although its Subscription Options could be different.
+                    // If the Retain Handling option is 0, any existing retained messages matching the Topic Filter MUST be re-sent,
+                    // but Applicaton Messages MUST NOT be lost due to replacing the Subscription [MQTT-3.8.4-4].
+                    broker.incoming_connect(&client_identifier, client_tx).await;
+
                     if !connect.clean_start {
 
-                        let session = broker.get_session_storage().await.get(&connect.client_identifier).await;
+                        let session = broker.get_session_storage().await.get(&client_identifier).await;
 
+                        let mut session_present = false;
                         if let Some(mut session) = session {
-                            session.discarded_at = None;
-                            broker.get_session_storage().await.upsert(&assigned.unwrap_or(connect.client_identifier), session).await?;
+                            let session = match session.end_timestamp {
+                                Some(end_timestamp) if end_timestamp >= SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() => Session::new(),
+                                _ => {
+                                    session.end_timestamp = None;
+                                    session_present = true;
+                                    session
+                                }
+                            };
+
+                            broker.get_session_storage().await.upsert(&client_identifier, session).await?;
                         }
 
                         framed.send(MqttPacket::ConnAck(ConnAck {
-                            connect_reason: ConnectReason::ImplementationSpecificError,
-                            reason_string: Some("Session not supported".to_string()),
-                            session_present: false,
+                            connect_reason: ConnectReason::Success,
+                            session_present,
                             session_expiry_interval: None,
                             receive_maximum: None,
                             maximum_qos: None,
@@ -533,6 +553,7 @@ async fn handle_connect<B: Broker>(
                             assigned_client_identifier: None,
                             topic_alias_maximum: None,
                             user_properties: None,
+                            reason_string: None,
                             wildcard_subscription_available: None,
                             subscription_identifiers_available: None,
                             shared_subscription_available: None,
@@ -543,11 +564,13 @@ async fn handle_connect<B: Broker>(
                             authentication_data: None,
                         })).await?;
 
-                        println!("non clean start not supported");
-                        return Err(Box::new(ClientHandlerError::ConnectError));
+                        return Ok(ConnectInformation {
+                            _client_identifier: client_identifier,
+                            keep_alive: server_keep_alive.unwrap_or(connect.keep_alive),
+                        });
                     }
 
-                    broker.incoming_connect(assigned.as_ref().unwrap_or(&connect.client_identifier), client_tx).await;
+                    broker.get_session_storage().await.delete(&client_identifier).await?;
 
                     framed
                         .send(MqttPacket::ConnAck(ConnAck {
@@ -558,7 +581,7 @@ async fn handle_connect<B: Broker>(
                             maximum_qos: Some(QoS::AtMostOnce),
                             retain_available: None,
                             maximum_packet_size: None,
-                            assigned_client_identifier: assigned.clone(),
+                            assigned_client_identifier: if is_assigned { Some(client_identifier.clone()) } else { None },
                             topic_alias_maximum: None,
                             reason_string: None,
                             user_properties: None,
@@ -574,7 +597,7 @@ async fn handle_connect<B: Broker>(
                         .await?;
 
                         Ok(ConnectInformation {
-                            _client_identifier: assigned.unwrap_or(connect.client_identifier),
+                            _client_identifier: client_identifier,
                             keep_alive: server_keep_alive.unwrap_or(connect.keep_alive),
                         })
                 }
