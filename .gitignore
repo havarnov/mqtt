@@ -2,3 +2,6 @@
 Cargo.lock
 
 .idea/
+
+# ignore apple specific files
+.DS_Store
