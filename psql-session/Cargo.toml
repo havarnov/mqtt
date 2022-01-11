@@ -1,0 +1,31 @@
+[package]
+name = "psql-session"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies.mqtt-server]
+version = "0.1.0"
+path    = "../server"
+
+[dependencies.sqlx]
+version = "0.5.9"
+features = ["time", "postgres", "runtime-tokio-rustls"]
+# git = "https://github.com/launchbadge/sqlx"
+# branch = "master"
+
+[dependencies.chrono]
+version = "0.4.19"
+
+[dependencies.async-trait]
+version = "0.1.51"
+
+[dependencies.serde]
+version = "1.0.133"
+
+[dependencies.serde_json]
+version = "1.0.74"
+
+[dev-dependencies.tokio]
+version = "1.15.0"

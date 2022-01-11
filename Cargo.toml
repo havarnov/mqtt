@@ -3,5 +3,5 @@
 members = [
     "protocol",
     "server",
-#    "psql-session"
+    "psql-session",
 ]
