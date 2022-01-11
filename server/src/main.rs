@@ -12,6 +12,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::sleep;
 use tokio_util::codec::Framed;
 
+use crate::session::{MemorySessionProvider, SessionProvider};
 use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::MqttPacketDecoder;
 use mqtt_protocol::types::{
@@ -24,14 +25,18 @@ const MAX_KEEP_ALIVE: u16 = 60;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    listener_v2().await
+    let session_provider = MemorySessionProvider::new();
+    listener_v2(session_provider).await
 }
 
-async fn listener_v2() -> Result<(), Box<dyn Error>> {
+async fn listener_v2<P: 'static + SessionProvider>(
+    session_provider: P,
+) -> Result<(), Box<dyn Error>> {
     let addr = "0.0.0.0:6142";
     let listener = TcpListener::bind(&addr).await?;
     let handler = Arc::new(IncomingConnectionHandler {
         clients: dashmap::DashMap::new(),
+        session_provider,
     });
     let (broadcast_tx, _) = broadcast::channel(1000);
     loop {
@@ -58,9 +63,10 @@ struct ClientSubscription {
     retain_as_published: bool,
 }
 
-async fn process_v2(
+async fn process_v2<Session: session::Session>(
     mut rx: UnboundedReceiver<ClientMessageV2>,
     broadcast_tx: broadcast::Sender<ClientBroadcastMessage>,
+    mut session: Session,
 ) -> Result<(), Box<dyn Error>> {
     let mut framed: Option<Framed<TcpStream, MqttPacketDecoder>> = None;
     let mut broadcast_rx = broadcast_tx.subscribe();
@@ -102,7 +108,9 @@ async fn process_v2(
                     Some(Ok(MqttPacket::PingReq)) => {
                         println!("ping received.");
                         let framed = framed.as_mut().expect("must be some at this point");
-                        framed.send(MqttPacket::PingResp).await?;
+                        if framed.send(MqttPacket::PingResp).await.is_err() {
+                            todo!("handle send error.")
+                        }
                     }
                     Some(Ok(MqttPacket::Disconnect(_d))) => {
                         println!("client disconnected.");
@@ -193,21 +201,7 @@ async fn process_v2(
                         if !connect.clean_start {
 
                             let session_present = false;
-                            // TODO: get session
-                            // let session = broker.get_session_storage().await.get(&client_identifier).await;
-                            //
-                            // if let Some(mut session) = session {
-                            //     let session = match session.end_timestamp {
-                            //         Some(end_timestamp) if end_timestamp >= SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() => Session::new(),
-                            //         _ => {
-                            //             session.end_timestamp = None;
-                            //             session_present = true;
-                            //             session
-                            //         }
-                            //     };
-                            //
-                            //     broker.get_session_storage().await.upsert(&client_identifier, session).await?;
-                            // }
+                            session.set_endtimestamp(None).await?;
 
                             new_framed.send(MqttPacket::ConnAck(ConnAck {
                                 connect_reason: ConnectReason::Success,
@@ -232,7 +226,8 @@ async fn process_v2(
                             })).await?;
                         }
                         else {
-                            // TODO: delete session from storage
+                            // TODO: handle error
+                            session.clear().await?;
 
                             let assigned_client_identifier =
                             if let ClientIdentifier::ServerAssigned { client_identifier } = client_identifier {
@@ -351,25 +346,33 @@ enum ClientMessageV2 {
     },
 }
 
-struct IncomingConnectionHandler {
+struct IncomingConnectionHandler<P: SessionProvider> {
     clients: dashmap::DashMap<String, UnboundedSender<ClientMessageV2>>,
+    session_provider: P,
 }
 
-impl IncomingConnectionHandler {
+impl<P: 'static + SessionProvider> IncomingConnectionHandler<P> {
     async fn incoming_connection(
         &self,
         stream: TcpStream,
         broadcast: broadcast::Sender<ClientBroadcastMessage>,
     ) -> Result<(), Box<dyn Error>> {
         let mut framed = Framed::new(stream, MqttPacketDecoder {});
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let (client_identifier, connect) = handle_connect_v2(&mut framed).await?;
+
+        // TODO must be outside "or_insert_with" due to async, but at this point we don't know if this is Ok/Err
+        // could be Err due to already active session...
+        let session = self
+            .session_provider
+            .get(&client_identifier.get_client_identifier())
+            .await?;
         dbg!(self.clients.len());
         self.clients
             .entry(client_identifier.get_client_identifier())
             .or_insert_with(|| {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                 tokio::spawn(async move {
-                    if let Err(e) = process_v2(rx, broadcast).await {
+                    if let Err(e) = process_v2(rx, broadcast, session).await {
                         println!("an error occurred; error = {:?}", e);
                     }
                 });
@@ -445,7 +448,9 @@ async fn handle_subscribe_v2(
 
     let mut reasons = Vec::new();
     for topic_filter in subscribe.topic_filters.iter() {
-        // TODO: handle shared subscriptions.
+        if topic_filter.filter.starts_with("$shared") {
+            todo!("handle shared subscriptions.");
+        }
 
         let t = TopicFilter::new(&topic_filter.filter);
 

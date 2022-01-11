@@ -1,9 +1,13 @@
 use async_trait::async_trait;
-use rand::random;
+use chrono::{DateTime, Utc};
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
+use std::borrow::Cow;
+use std::sync::{Arc, Weak};
 
 #[derive(Debug, Clone)]
 pub enum SessionError {
-    ETagMismatch,
+    SessionAlreadyActive,
 }
 
 impl std::fmt::Display for SessionError {
@@ -15,69 +19,88 @@ impl std::fmt::Display for SessionError {
 impl std::error::Error for SessionError {}
 
 #[derive(Clone)]
-pub struct Session {
-    e_tag: Option<String>,
-
+pub(crate) struct MemorySession {
     /// This session will be discarded/disregarded after this timestamp.
     /// None means that this session is currently active.
-    pub end_timestamp: Option<u64>,
-}
-
-impl Session {
-    pub fn new() -> Session {
-        Session {
-            e_tag: None,
-            end_timestamp: None,
-        }
-    }
+    pub end_timestamp: Option<DateTime<Utc>>,
+    _strong: Arc<()>,
 }
 
 #[async_trait]
-pub trait SessionStorage: Send + Sync {
-    async fn get(&self, client_id: &str) -> Option<Session>;
-    async fn upsert(&self, client_id: &str, session: Session) -> Result<(), SessionError>;
-    async fn delete(&self, client_id: &str) -> Result<(), SessionError>;
-}
-
-pub struct MemorySessionStorage {
-    sessions: dashmap::DashMap<String, Session>,
-}
-
-impl MemorySessionStorage {
-    pub fn new() -> Self {
-        MemorySessionStorage {
-            sessions: dashmap::DashMap::new(),
-        }
-    }
-}
-
-#[async_trait]
-impl SessionStorage for MemorySessionStorage {
-    async fn get(&self, client_id: &str) -> Option<Session> {
-        self.sessions.get(client_id).map(|s| s.clone())
-    }
-
-    async fn upsert(&self, client_id: &str, mut session: Session) -> Result<(), SessionError> {
-        match self.sessions.entry(client_id.to_string()) {
-            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                if entry.get().e_tag != session.e_tag {
-                    Err(SessionError::ETagMismatch)
-                } else {
-                    session.e_tag = Some(random::<u64>().to_string());
-                    entry.insert(session);
-                    Ok(())
-                }
-            }
-            dashmap::mapref::entry::Entry::Vacant(entry) => {
-                session.e_tag = Some(random::<u64>().to_string());
-                entry.insert(session);
-                Ok(())
-            }
-        }
-    }
-
-    async fn delete(&self, client_id: &str) -> Result<(), SessionError> {
-        self.sessions.remove(client_id);
+impl Session for MemorySession {
+    async fn clear(&mut self) -> Result<(), SessionError> {
+        self.end_timestamp = None;
         Ok(())
     }
+
+    async fn set_endtimestamp(
+        &mut self,
+        timestamp: Option<DateTime<Utc>>,
+    ) -> Result<(), SessionError> {
+        self.end_timestamp = timestamp;
+        Ok(())
+    }
+
+    async fn get_endtimestamp(&self) -> Result<Option<Cow<DateTime<Utc>>>, SessionError> {
+        Ok(self.end_timestamp.as_ref().map(Cow::Borrowed))
+    }
+}
+
+pub(crate) struct MemorySessionProvider {
+    sessions: DashMap<String, Weak<()>>,
+}
+
+impl MemorySessionProvider {
+    pub(crate) fn new() -> MemorySessionProvider {
+        MemorySessionProvider {
+            sessions: DashMap::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl SessionProvider for MemorySessionProvider {
+    type S = MemorySession;
+
+    async fn get(&self, client_id: &str) -> Result<Self::S, SessionError> {
+        match self.sessions.entry(client_id.to_owned()) {
+            Entry::Occupied(occupied) if occupied.get().strong_count() > 0 => {
+                Err(SessionError::SessionAlreadyActive)
+            }
+            Entry::Occupied(occupied) => {
+                let strong = Arc::new(());
+                let weak = Arc::downgrade(&strong);
+                occupied.replace_entry(weak);
+                Ok(MemorySession {
+                    end_timestamp: None,
+                    _strong: strong,
+                })
+            }
+            Entry::Vacant(vacant) => {
+                let strong = Arc::new(());
+                let weak = Arc::downgrade(&strong);
+                vacant.insert(weak);
+                Ok(MemorySession {
+                    end_timestamp: None,
+                    _strong: strong,
+                })
+            }
+        }
+    }
+}
+
+#[async_trait]
+pub trait Session: Send + Sync {
+    async fn clear(&mut self) -> Result<(), SessionError>;
+    async fn set_endtimestamp(
+        &mut self,
+        timestamp: Option<DateTime<Utc>>,
+    ) -> Result<(), SessionError>;
+    async fn get_endtimestamp(&self) -> Result<Option<Cow<DateTime<Utc>>>, SessionError>;
+}
+
+#[async_trait]
+pub trait SessionProvider: Send + Sync {
+    type S: Session;
+    async fn get(&self, client_id: &str) -> Result<Self::S, SessionError>;
 }
