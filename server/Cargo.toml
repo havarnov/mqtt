@@ -4,7 +4,14 @@ version = "0.1.0"
 authors = ["Håvar Nøvik <havar.novik@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "mqtt_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mqtt_server_bin"
+path = "src/main.rs"
+
 [dependencies.rand]
 version = "0.8.4"
 
@@ -33,4 +40,7 @@ version = "0.6.6"
 features = ["codec"]
 
 [dependencies.futures]
-version = "0.3.14"
+version = "0.3.19"
+
+[dependencies.chrono]
+version = "0.4.19"
