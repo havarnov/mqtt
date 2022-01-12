@@ -106,7 +106,17 @@ async fn process<Session: session::Session>(
                 since_last = tokio::time::Instant::now();
                 match packet {
                     Some(Ok(MqttPacket::Connect(_))) => {
-                        todo!("What's the correct thing to do here, as we should never receive a second Connect packet.");
+                        // A Connect packet can only come to the processor through the ConnectMessage
+                        // and if we every end up here it means the client has sent multiple Connect packets.
+                        // Therefore we're closing the network connection.
+                        // From the spec:
+                        //
+                        // 3.1 CONNECT – Connection Request
+                        // (...)
+                        // A Client can only send the CONNECT packet once over a Network Connection.
+                        // The Server MUST process a second CONNECT packet sent from a Client as a Protocol Error and close the Network Connection [MQTT-3.1.0-2].
+                        // (...)
+                        framed = None;
                     },
                     Some(Ok(MqttPacket::PingReq)) => {
                         println!("ping received.");
