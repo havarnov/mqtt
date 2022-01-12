@@ -11,11 +11,35 @@ use std::io::Error;
 pub struct MqttPacketDecoder {}
 
 #[derive(Debug)]
-pub struct MqttPacketDecoderError {}
+pub enum MqttPacketEncoderError {
+    IOError(std::io::Error),
+    Internal
+}
+
+impl From<std::io::Error> for MqttPacketEncoderError {
+    fn from(error: Error) -> Self {
+        MqttPacketEncoderError::IOError(error)
+    }
+}
+
+impl Display for MqttPacketEncoderError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MqttPacketDecoderError: unknown.")
+    }
+}
+
+impl std::error::Error for MqttPacketEncoderError {}
+
+#[derive(Debug)]
+pub enum MqttPacketDecoderError {
+    IOError(std::io::Error),
+    EncodingError,
+    DecodingError,
+}
 
 impl From<std::io::Error> for MqttPacketDecoderError {
-    fn from(_: Error) -> Self {
-        MqttPacketDecoderError {}
+    fn from(error: Error) -> Self {
+        MqttPacketDecoderError::IOError(error)
     }
 }
 
@@ -28,7 +52,7 @@ impl Display for MqttPacketDecoderError {
 impl std::error::Error for MqttPacketDecoderError {}
 
 impl Encoder<MqttPacket> for MqttPacketDecoder {
-    type Error = MqttPacketDecoderError;
+    type Error = MqttPacketEncoderError;
 
     fn encode(&mut self, item: MqttPacket, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let bytes = encode(&item);
@@ -58,11 +82,11 @@ impl Decoder for MqttPacketDecoder {
             Err(nom::Err::Incomplete(_)) => Ok(None),
             Err(nom::Err::Failure(err)) => {
                 println!("Something failed while parsing: {:?}", err);
-                Err(MqttPacketDecoderError {})
+                Err(MqttPacketDecoderError::DecodingError)
             }
             other => {
                 println!("Something failed while parsing: {:?}", other);
-                Err(MqttPacketDecoderError {})
+                Err(MqttPacketDecoderError::DecodingError)
             }
         }
     }

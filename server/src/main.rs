@@ -15,7 +15,7 @@ use tokio_util::codec::Framed;
 
 use crate::session::{MemorySessionProvider, SessionProvider};
 use crate::topic_filter::TopicFilter;
-use mqtt_protocol::framed::MqttPacketDecoder;
+use mqtt_protocol::framed::{MqttPacketDecoder, MqttPacketEncoderError};
 use mqtt_protocol::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
     SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
@@ -120,9 +120,13 @@ async fn process<Session: session::Session>(
                     },
                     Some(Ok(MqttPacket::PingReq)) => {
                         println!("ping received.");
-                        let framed = framed.as_mut().expect("must be some at this point");
-                        if framed.send(MqttPacket::PingResp).await.is_err() {
-                            todo!("handle send error.")
+                        match framed.as_mut().expect("must be some at this point").send(MqttPacket::PingResp).await {
+                            Err(MqttPacketEncoderError::IOError(io_error)) => {
+                                // close the network connection on any io error.
+                                framed = None;
+                            },
+                            Err(_) => {}
+                            _ => {}
                         }
                     }
                     Some(Ok(MqttPacket::Disconnect(_d))) => {
