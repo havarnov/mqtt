@@ -7,6 +7,7 @@ use crate::types::MqttPacket;
 use std::fmt::{Display, Formatter};
 use std::io::Error;
 
+#[derive(Debug)]
 pub struct MqttPacketDecoder {}
 
 #[derive(Debug)]

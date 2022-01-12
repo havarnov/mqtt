@@ -1,6 +1,7 @@
 mod session;
 mod topic_filter;
 
+use dashmap::mapref::entry::Entry;
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::error::Error;
@@ -339,6 +340,7 @@ enum ClientBroadcastMessage {
     Publish(Arc<Publish>),
 }
 
+#[derive(Debug)]
 enum ClientMessageV2 {
     Connect {
         client_identifier: ClientIdentifier,
@@ -359,34 +361,67 @@ impl<P: 'static + SessionProvider> IncomingConnectionHandler<P> {
         broadcast: broadcast::Sender<ClientBroadcastMessage>,
     ) -> Result<(), Box<dyn Error>> {
         let mut framed = Framed::new(stream, MqttPacketDecoder {});
+
         let (client_identifier, connect) = handle_connect_v2(&mut framed).await?;
 
-        // TODO must be outside "or_insert_with" due to async, but at this point we don't know if this is Ok/Err
-        // could be Err due to already active session...
-        let session = self
-            .session_provider
-            .get(&client_identifier.get_client_identifier())
-            .await?;
-        dbg!(self.clients.len());
-        self.clients
+        match self
+            .clients
             .entry(client_identifier.get_client_identifier())
-            .or_insert_with(|| {
+        {
+            Entry::Occupied(occupied) => {
+                if occupied.get().is_closed() {
+                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+                    let session = self
+                        .session_provider
+                        .get(&client_identifier.get_client_identifier())
+                        .await?;
+
+                    tokio::spawn(async move {
+                        if let Err(e) = process_v2(rx, broadcast, session).await {
+                            println!("an error occurred; error = {:?}", e);
+                        }
+                    });
+
+                    tx.send(ClientMessageV2::Connect {
+                        client_identifier,
+                        connect,
+                        framed,
+                    })?;
+
+                    occupied.replace_entry(tx);
+                } else {
+                    occupied.get().send(ClientMessageV2::Connect {
+                        client_identifier,
+                        connect,
+                        framed,
+                    })?;
+                }
+            }
+            Entry::Vacant(vacant) => {
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+                let session = self
+                    .session_provider
+                    .get(&client_identifier.get_client_identifier())
+                    .await?;
+
                 tokio::spawn(async move {
                     if let Err(e) = process_v2(rx, broadcast, session).await {
                         println!("an error occurred; error = {:?}", e);
                     }
                 });
-                tx
-            })
-            .send(ClientMessageV2::Connect {
-                client_identifier,
-                connect,
-                framed,
-            })
-            .map_err(|e| e.to_string())
-            // TODO: retry mechanism
-            .expect("Couldn't send message to the client");
+
+                tx.send(ClientMessageV2::Connect {
+                    client_identifier,
+                    connect,
+                    framed,
+                })?;
+
+                vacant.insert(tx);
+            }
+        }
+
         Ok(())
     }
 }
