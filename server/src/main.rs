@@ -22,6 +22,7 @@ use mqtt_protocol::types::{
 
 // TODO: consts that should be configurable
 const MAX_KEEP_ALIVE: u16 = 60;
+const MAX_CONNECT_DELAY: Duration = Duration::from_millis(20000);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -40,8 +41,8 @@ async fn listener_v2<P: 'static + SessionProvider>(
     });
     let (broadcast_tx, _) = broadcast::channel(1000);
     loop {
-        // // Asynchronously wait for an inbound TcpStream.
         let (stream, _addr) = listener.accept().await?;
+
         let handler = handler.clone();
         let broadcast_tx = broadcast_tx.clone();
 
@@ -408,7 +409,7 @@ impl ClientIdentifier {
 async fn handle_connect_v2(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
 ) -> Result<(ClientIdentifier, Connect), Box<dyn Error>> {
-    let connection_timeout = sleep(Duration::from_millis(20000));
+    let connection_timeout = sleep(MAX_CONNECT_DELAY);
     tokio::select! {
         packet = framed.next() =>
             match packet {
