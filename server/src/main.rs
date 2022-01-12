@@ -77,29 +77,30 @@ async fn process<Session: session::Session>(
     let mut subscriptions: HashMap<String, ClientSubscription> = HashMap::new();
 
     let mut since_last: tokio::time::Instant = tokio::time::Instant::now();
-    let mut keep_alive = 10;
-    let mut keep_alive_timeout: tokio::time::Sleep;
-    let mut keep_alive_timeout_duration = Duration::from_secs(keep_alive as u64);
+    let mut keep_alive = Duration::from_secs(0);
+    let mut keep_alive_timeout = sleep(keep_alive);
+    // needed to be able to mutate without consuming.
+    // see https://docs.rs/tokio/latest/tokio/time/struct.Sleep.html
+    tokio::pin!(keep_alive_timeout);
 
     loop {
-        keep_alive_timeout = sleep(keep_alive_timeout_duration);
-
         tokio::select! {
-            _ = keep_alive_timeout => {
+            _ = &mut keep_alive_timeout, if framed.is_some() => {
                 // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901045
                 // 3.1.2.10 Keep Alive
                 // If the Keep Alive value is non-zero and the Server does not receive an MQTT Control Packet
                 // from the Client within one and a half times the Keep Alive time period, it MUST close the
                 // Network Connection to the Client as if the network had failed.
-                if since_last.elapsed().as_secs_f64() > (keep_alive as f64 * 1.5) {
-                    todo!("if connection is active, fail. If not then we must keep going.");
-                    // return Err(Box::new(ClientHandlerError::KeepAliveTimeout));
+                if since_last.elapsed().as_secs_f64() > (keep_alive.as_secs_f64() * 1.5) {
+                    // Setting framed to None aka dropping the network connection
+                    framed = None;
+                } else {
+                    match (keep_alive.as_secs_f64() * 1.5) - since_last.elapsed().as_secs_f64() {
+                        delta if delta < 0.0 => keep_alive_timeout.as_mut().reset(tokio::time::Instant::now()),
+                        delta => keep_alive_timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs_f64(delta))
+                    };
                 }
 
-                keep_alive_timeout_duration = match (keep_alive as f64 * 1.5) - since_last.elapsed().as_secs_f64() {
-                    x if x < 0.0 => Duration::from_secs(0),
-                    x => Duration::from_secs(x as u64),
-                };
             },
             packet = async { framed.as_mut().expect("unreachable").next().await }, if framed.is_some() => {
                 since_last = tokio::time::Instant::now();
@@ -176,6 +177,8 @@ async fn process<Session: session::Session>(
             client_message = connect_rx.recv() => {
                 match client_message {
                     Some(ConnectMessage { client_identifier, connect, framed: mut new_framed }) => {
+                        since_last = tokio::time::Instant::now();
+
                         // 3.3.2.3.4 Topic Alias
                         // Topic Alias mappings exist only within a Network Connection and last only for the lifetime of that Network Connection.
                         topic_alias_map.clear();
@@ -198,7 +201,7 @@ async fn process<Session: session::Session>(
                             None
                         };
 
-                        keep_alive = server_keep_alive.unwrap_or(connect.keep_alive);
+                        keep_alive = Duration::from_secs(server_keep_alive.unwrap_or(connect.keep_alive) as u64);
 
                         if !connect.clean_start {
 
