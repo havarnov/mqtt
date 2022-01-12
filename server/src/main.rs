@@ -28,10 +28,10 @@ const MAX_CONNECT_DELAY: Duration = Duration::from_millis(20000);
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let session_provider = MemorySessionProvider::new();
-    listener_v2(session_provider).await
+    listener(session_provider).await
 }
 
-async fn listener_v2<P: 'static + SessionProvider>(
+async fn listener<P: 'static + SessionProvider>(
     session_provider: P,
 ) -> Result<(), Box<dyn Error>> {
     let addr = "0.0.0.0:6142";
@@ -65,8 +65,8 @@ struct ClientSubscription {
     retain_as_published: bool,
 }
 
-async fn process_v2<Session: session::Session>(
-    mut rx: UnboundedReceiver<ClientMessageV2>,
+async fn process<Session: session::Session>(
+    mut connect_rx: UnboundedReceiver<ConnectMessage>,
     broadcast_tx: broadcast::Sender<ClientBroadcastMessage>,
     mut session: Session,
 ) -> Result<(), Box<dyn Error>> {
@@ -124,7 +124,7 @@ async fn process_v2<Session: session::Session>(
                     Some(Ok(MqttPacket::Publish(publish))) => {
                         println!("client published packet: {:?}.", publish);
                         let framed = framed.as_mut().expect("must be some at this point");
-                        handle_publish_v2(
+                        handle_publish(
                             framed,
                             &mut topic_alias_map,
                             publish,
@@ -134,7 +134,7 @@ async fn process_v2<Session: session::Session>(
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
                         println!("client sent subscribe packet: {:?}.", subscribe);
                         let framed = framed.as_mut().expect("must be some at this point");
-                        handle_subscribe_v2(
+                        handle_subscribe(
                             framed,
                             &mut subscriptions,
                             subscribe)
@@ -173,9 +173,9 @@ async fn process_v2<Session: session::Session>(
                     }
                 }
             },
-            client_message = rx.recv() => {
+            client_message = connect_rx.recv() => {
                 match client_message {
-                    Some(ClientMessageV2::Connect { client_identifier, connect, framed: mut new_framed }) => {
+                    Some(ConnectMessage { client_identifier, connect, framed: mut new_framed }) => {
                         // 3.3.2.3.4 Topic Alias
                         // Topic Alias mappings exist only within a Network Connection and last only for the lifetime of that Network Connection.
                         topic_alias_map.clear();
@@ -266,7 +266,7 @@ async fn process_v2<Session: session::Session>(
                         // here we replace the framed tcp stream we're listening to.
                         framed = Some(new_framed);
                     },
-                    _ => unimplemented!("unimplemented handling of ClientMessage"),
+                    None => unreachable!("The connect_rx can only be closed from this end, the sender in IncomingConnectionHandler will only be dropped if this process has already been drop."),
                 }
             },
             client_broadcast_message = broadcast_rx.recv() => {
@@ -341,16 +341,14 @@ enum ClientBroadcastMessage {
 }
 
 #[derive(Debug)]
-enum ClientMessageV2 {
-    Connect {
-        client_identifier: ClientIdentifier,
-        connect: Connect,
-        framed: Framed<TcpStream, MqttPacketDecoder>,
-    },
+struct ConnectMessage {
+    client_identifier: ClientIdentifier,
+    connect: Connect,
+    framed: Framed<TcpStream, MqttPacketDecoder>,
 }
 
 struct IncomingConnectionHandler<P: SessionProvider> {
-    clients: dashmap::DashMap<String, UnboundedSender<ClientMessageV2>>,
+    clients: dashmap::DashMap<String, UnboundedSender<ConnectMessage>>,
     session_provider: P,
 }
 
@@ -362,7 +360,7 @@ impl<P: 'static + SessionProvider> IncomingConnectionHandler<P> {
     ) -> Result<(), Box<dyn Error>> {
         let mut framed = Framed::new(stream, MqttPacketDecoder {});
 
-        let (client_identifier, connect) = handle_connect_v2(&mut framed).await?;
+        let (client_identifier, connect) = handle_connect(&mut framed).await?;
 
         match self
             .clients
@@ -378,12 +376,12 @@ impl<P: 'static + SessionProvider> IncomingConnectionHandler<P> {
                         .await?;
 
                     tokio::spawn(async move {
-                        if let Err(e) = process_v2(rx, broadcast, session).await {
+                        if let Err(e) = process(rx, broadcast, session).await {
                             println!("an error occurred; error = {:?}", e);
                         }
                     });
 
-                    tx.send(ClientMessageV2::Connect {
+                    tx.send(ConnectMessage {
                         client_identifier,
                         connect,
                         framed,
@@ -391,7 +389,7 @@ impl<P: 'static + SessionProvider> IncomingConnectionHandler<P> {
 
                     occupied.replace_entry(tx);
                 } else {
-                    occupied.get().send(ClientMessageV2::Connect {
+                    occupied.get().send(ConnectMessage {
                         client_identifier,
                         connect,
                         framed,
@@ -407,12 +405,12 @@ impl<P: 'static + SessionProvider> IncomingConnectionHandler<P> {
                     .await?;
 
                 tokio::spawn(async move {
-                    if let Err(e) = process_v2(rx, broadcast, session).await {
+                    if let Err(e) = process(rx, broadcast, session).await {
                         println!("an error occurred; error = {:?}", e);
                     }
                 });
 
-                tx.send(ClientMessageV2::Connect {
+                tx.send(ConnectMessage {
                     client_identifier,
                     connect,
                     framed,
@@ -441,7 +439,7 @@ impl ClientIdentifier {
     }
 }
 
-async fn handle_connect_v2(
+async fn handle_connect(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
 ) -> Result<(ClientIdentifier, Connect), Box<dyn Error>> {
     let connection_timeout = sleep(MAX_CONNECT_DELAY);
@@ -473,7 +471,7 @@ async fn handle_connect_v2(
     }
 }
 
-async fn handle_subscribe_v2(
+async fn handle_subscribe(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
     subscriptions: &mut HashMap<String, ClientSubscription>,
     subscribe: Subscribe,
@@ -520,7 +518,7 @@ async fn handle_subscribe_v2(
     Ok(())
 }
 
-async fn handle_publish_v2(
+async fn handle_publish(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
     topic_alias_map: &mut HashMap<u16, String>,
     publish: Publish,
