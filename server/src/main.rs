@@ -126,6 +126,7 @@ async fn process<Session: session::Session>(
                         // Topic Alias mappings exist only within a Network Connection and last only for the lifetime of that Network Connection.
                         topic_alias_map.clear();
                         // TODO: ???
+                        framed = None;
                     }
                     Some(Ok(MqttPacket::Publish(publish))) => {
                         println!("client published packet: {:?}.", publish);

@@ -439,7 +439,6 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
 }
 
 fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Subscribe> {
-    println!("parse_subscribe: {}", packet_size);
     let len = input.len();
     let (input, packet_identifier) = u16(Endianness::Big)(input)?;
     let (mut input, properties) = parse_properties(input)?;
