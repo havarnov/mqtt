@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::SendError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::{sleep, Instant};
 use tokio_util::codec::Framed;
@@ -20,7 +21,6 @@ use mqtt_protocol::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
     SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
 };
-use mqtt_protocol::types::UnsubscribeReason::UnspecifiedError;
 
 // TODO: consts that should be configurable
 const MAX_KEEP_ALIVE: u16 = 60;
@@ -129,13 +129,19 @@ async fn process<Session: session::Session>(
                     }
                     Some(Ok(MqttPacket::Publish(publish))) => {
                         println!("client published packet: {:?}.", publish);
-                        let framed = framed.as_mut().expect("must be some at this point");
-                        handle_publish(
-                            framed,
+                        match handle_publish(
+                            framed.as_mut().expect("must be some at this point"),
                             &mut topic_alias_map,
                             publish,
                             &broadcast_tx)
-                        .await?;
+                        .await {
+                            Ok(_) => (),
+                            Err(HandlePublishError::BroadcastSendError(error)) => return Err(Box::new(error)),
+                            Err(HandlePublishError::FramedError(error)) => {
+                                println!("{:?}", error);
+                                framed = None;
+                            }
+                        }
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
                         println!("client sent subscribe packet: {:?}.", subscribe);
@@ -568,12 +574,38 @@ async fn handle_subscribe<Session: session::Session>(
     Ok(())
 }
 
+#[derive(Debug)]
+enum HandlePublishError {
+    BroadcastSendError(SendError<ClientBroadcastMessage>),
+    FramedError(MqttPacketEncoderError),
+}
+
+impl From<SendError<ClientBroadcastMessage>> for HandlePublishError {
+    fn from(error: SendError<ClientBroadcastMessage>) -> Self {
+        HandlePublishError::BroadcastSendError(error)
+    }
+}
+
+impl From<MqttPacketEncoderError> for HandlePublishError {
+    fn from(mqtt_packet_encoder_error: MqttPacketEncoderError) -> Self {
+        HandlePublishError::FramedError(mqtt_packet_encoder_error)
+    }
+}
+
+impl std::fmt::Display for HandlePublishError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for HandlePublishError {}
+
 async fn handle_publish(
     framed: &mut Framed<TcpStream, MqttPacketDecoder>,
     topic_alias_map: &mut HashMap<u16, String>,
     publish: Publish,
     broadcast_tx: &broadcast::Sender<ClientBroadcastMessage>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), HandlePublishError> {
     // 3.3.4 PUBLISH Actions
     let topic_name = match publish.topic_alias {
         // TODO: configure max topic_alias
