@@ -1,8 +1,11 @@
+use crate::topic_filter::TopicFilter;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use mqtt_protocol::types::QoS;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 #[derive(Debug, Clone)]
@@ -18,11 +21,11 @@ impl std::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
-#[derive(Clone)]
 pub(crate) struct MemorySession {
     /// This session will be discarded/disregarded after this timestamp.
     /// None means that this session is currently active.
-    pub end_timestamp: Option<DateTime<Utc>>,
+    end_timestamp: Option<DateTime<Utc>>,
+    subscriptions: HashMap<String, ClientSubscription>,
     _strong: Arc<()>,
 }
 
@@ -43,6 +46,23 @@ impl Session for MemorySession {
 
     async fn get_endtimestamp(&self) -> Result<Option<Cow<DateTime<Utc>>>, SessionError> {
         Ok(self.end_timestamp.as_ref().map(Cow::Borrowed))
+    }
+
+    async fn add_subscription(
+        &mut self,
+        topic: String,
+        client_subscription: ClientSubscription,
+    ) -> Result<(), SessionError> {
+        self.subscriptions.insert(topic, client_subscription);
+        Ok(())
+    }
+
+    async fn remove_subscription(&mut self, topic: String) -> Result<Option<()>, SessionError> {
+        Ok(self.subscriptions.remove(&topic).map(|_| ()))
+    }
+
+    async fn get_subscriptions(&self) -> Result<Vec<&ClientSubscription>, SessionError> {
+        Ok(self.subscriptions.values().collect())
     }
 }
 
@@ -73,6 +93,7 @@ impl SessionProvider for MemorySessionProvider {
                 occupied.replace_entry(weak);
                 Ok(MemorySession {
                     end_timestamp: None,
+                    subscriptions: HashMap::new(),
                     _strong: strong,
                 })
             }
@@ -82,11 +103,20 @@ impl SessionProvider for MemorySessionProvider {
                 vacant.insert(weak);
                 Ok(MemorySession {
                     end_timestamp: None,
+                    subscriptions: HashMap::new(),
                     _strong: strong,
                 })
             }
         }
     }
+}
+
+#[derive(Debug)]
+pub struct ClientSubscription {
+    pub topic_filter: TopicFilter,
+    pub subscription_identifier: Option<u32>,
+    pub maximum_qos: QoS,
+    pub retain_as_published: bool,
 }
 
 #[async_trait]
@@ -97,6 +127,13 @@ pub trait Session: Send + Sync {
         timestamp: Option<DateTime<Utc>>,
     ) -> Result<(), SessionError>;
     async fn get_endtimestamp(&self) -> Result<Option<Cow<DateTime<Utc>>>, SessionError>;
+    async fn add_subscription(
+        &mut self,
+        topic: String,
+        client_subscription: ClientSubscription,
+    ) -> Result<(), SessionError>;
+    async fn remove_subscription(&mut self, topic: String) -> Result<Option<()>, SessionError>;
+    async fn get_subscriptions(&self) -> Result<Vec<&ClientSubscription>, SessionError>;
 }
 
 #[async_trait]

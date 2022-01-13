@@ -10,10 +10,10 @@ use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::time::sleep;
+use tokio::time::{sleep, Instant};
 use tokio_util::codec::Framed;
 
-use crate::session::{MemorySessionProvider, SessionProvider};
+use crate::session::{ClientSubscription, MemorySessionProvider, SessionError, SessionProvider};
 use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::{MqttPacketDecoder, MqttPacketEncoderError};
 use mqtt_protocol::types::{
@@ -31,9 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     listener(session_provider).await
 }
 
-async fn listener<P: 'static + SessionProvider>(
-    session_provider: P,
-) -> Result<(), Box<dyn Error>> {
+async fn listener<P: 'static + SessionProvider>(session_provider: P) -> Result<(), Box<dyn Error>> {
     let addr = "0.0.0.0:6142";
     let listener = TcpListener::bind(&addr).await?;
     let handler = Arc::new(IncomingConnectionHandler {
@@ -57,14 +55,6 @@ async fn listener<P: 'static + SessionProvider>(
     }
 }
 
-#[derive(Debug)]
-struct ClientSubscription {
-    topic_filter: TopicFilter,
-    subscription_identifier: Option<u32>,
-    maximum_qos: QoS,
-    retain_as_published: bool,
-}
-
 async fn process<Session: session::Session>(
     mut connect_rx: UnboundedReceiver<ConnectMessage>,
     broadcast_tx: broadcast::Sender<ClientBroadcastMessage>,
@@ -74,11 +64,10 @@ async fn process<Session: session::Session>(
     let mut broadcast_rx = broadcast_tx.subscribe();
 
     let mut topic_alias_map = HashMap::new();
-    let mut subscriptions: HashMap<String, ClientSubscription> = HashMap::new();
 
     let mut since_last: tokio::time::Instant = tokio::time::Instant::now();
     let mut keep_alive = Duration::from_secs(0);
-    let mut keep_alive_timeout = sleep(keep_alive);
+    let keep_alive_timeout = sleep(keep_alive);
     // needed to be able to mutate without consuming.
     // see https://docs.rs/tokio/latest/tokio/time/struct.Sleep.html
     tokio::pin!(keep_alive_timeout);
@@ -123,6 +112,7 @@ async fn process<Session: session::Session>(
                         match framed.as_mut().expect("must be some at this point").send(MqttPacket::PingResp).await {
                             Err(MqttPacketEncoderError::IOError(io_error)) => {
                                 // close the network connection on any io error.
+                                println!("{:?}", io_error);
                                 framed = None;
                             },
                             Err(_) => {}
@@ -148,12 +138,18 @@ async fn process<Session: session::Session>(
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
                         println!("client sent subscribe packet: {:?}.", subscribe);
-                        let framed = framed.as_mut().expect("must be some at this point");
-                        handle_subscribe(
-                            framed,
-                            &mut subscriptions,
+                        match handle_subscribe(
+                            framed.as_mut().expect("must be some at this point"),
+                            &mut session,
                             subscribe)
-                        .await?;
+                        .await {
+                            Ok(_) => (),
+                            Err(HandleSubscribeError::FramedError(error)) => {
+                                println!("{:?}", error);
+                                framed = None;
+                            }
+                            Err(HandleSubscribeError::SessionError(_error)) => todo!("What to do with session errors??")
+                        }
                     }
                     Some(Ok(MqttPacket::Unsubscribe(unsubscribe))) => {
                         println!("client sent unsubscribe packet: {:?}.", unsubscribe);
@@ -161,7 +157,7 @@ async fn process<Session: session::Session>(
 
                         let mut reasons = Vec::new();
                         for unsubscribe_topic_filter in unsubscribe.topic_filters.iter() {
-                            if subscriptions.remove(unsubscribe_topic_filter).is_none() {
+                            if session.remove_subscription(unsubscribe_topic_filter.to_owned()).await?.is_none() {
                                 reasons.push(UnsubscribeReason::NoSubscriptionExisted);
                             } else {
                                 reasons.push(UnsubscribeReason::Success);
@@ -288,9 +284,16 @@ async fn process<Session: session::Session>(
             },
             client_broadcast_message = broadcast_rx.recv() => {
                 match client_broadcast_message {
-                    Ok(ClientBroadcastMessage::Publish(publish)) => {
-                        if let Some(framed) = framed.as_mut() {
-                            for subscription  in subscriptions.values() {
+                    Ok(ClientBroadcastMessage::Publish { received_instant, publish }) => {
+                        if framed.is_none() {
+                            todo!("impl incoming subscription if no network connection with client.");
+                        } else {
+                            let subscriptions = match session.get_subscriptions().await {
+                                Ok(subscriptions) => subscriptions,
+                                Err(_) => todo!("handle session error")
+                            };
+
+                            for subscription  in subscriptions {
 
                                 // TODO: handle retain_handling
 
@@ -318,8 +321,7 @@ async fn process<Session: session::Session>(
                                 // The PUBLISH packet sent to a Client by the Server MUST contain a
                                 // Message Expiry Interval set to the received value minus the time that
                                 // the Application Message has been waiting in the Server
-                                // TODO: find out the difference between the time the message was received and the time it was sent
-                                // let message_expiry_interval = publish.message_expiry_interval.map(|e| e - 0u32);
+                                let message_expiry_interval = publish.message_expiry_interval.map(|e| e - (Instant::now() - received_instant).as_secs() as u32);
 
                                 let p = Publish {
                                     duplicate: false,
@@ -328,21 +330,22 @@ async fn process<Session: session::Session>(
                                     topic_name: publish.topic_name.clone(),
                                     packet_identifier,
                                     payload_format_indicator: publish.payload_format_indicator,
-                                    message_expiry_interval: publish.message_expiry_interval,
+                                    message_expiry_interval,
                                     topic_alias: None,
                                     response_topic: publish.response_topic.clone(),
                                     correlation_data: publish.correlation_data.clone(),
                                     user_properties: publish.user_properties.clone(),
-                                    // TODO: check how to handle topic names that matches multiple topic filters (for the same client)?
                                     subscription_identifier: subscription.subscription_identifier,
                                     content_type: publish.content_type.clone(),
                                     payload: publish.payload.clone()
                                 };
 
-                                framed.send(MqttPacket::Publish(p)).await?;
+                                if framed.as_mut().expect("must be Some here.").send(MqttPacket::Publish(p)).await.is_err() {
+                                    println!("Framed send error");
+                                    framed = None;
+                                    break;
+                                }
                             }
-                        } else {
-                            todo!("impl incoming subscription if no network connection with client.")
                         }
                     },
                     Err(_) => todo!("impl."),
@@ -354,7 +357,10 @@ async fn process<Session: session::Session>(
 
 #[derive(Clone, Debug)]
 enum ClientBroadcastMessage {
-    Publish(Arc<Publish>),
+    Publish {
+        received_instant: Instant,
+        publish: Arc<Publish>,
+    },
 }
 
 #[derive(Debug)]
@@ -488,40 +494,66 @@ async fn handle_connect(
     }
 }
 
-async fn handle_subscribe(
-    framed: &mut Framed<TcpStream, MqttPacketDecoder>,
-    subscriptions: &mut HashMap<String, ClientSubscription>,
-    subscribe: Subscribe,
-) -> Result<(), Box<dyn Error>> {
-    // TODO: handle session.
+#[derive(Debug)]
+enum HandleSubscribeError {
+    SessionError(SessionError),
+    FramedError(MqttPacketEncoderError),
+}
 
+impl From<SessionError> for HandleSubscribeError {
+    fn from(session_error: SessionError) -> Self {
+        HandleSubscribeError::SessionError(session_error)
+    }
+}
+
+impl From<MqttPacketEncoderError> for HandleSubscribeError {
+    fn from(mqtt_packet_encoder_error: MqttPacketEncoderError) -> Self {
+        HandleSubscribeError::FramedError(mqtt_packet_encoder_error)
+    }
+}
+
+impl std::fmt::Display for HandleSubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for HandleSubscribeError {}
+
+async fn handle_subscribe<Session: session::Session>(
+    framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+    session: &mut Session,
+    subscribe: Subscribe,
+) -> Result<(), HandleSubscribeError> {
     println!("client subscribed to: {:?}", subscribe.topic_filters);
 
     let mut reasons = Vec::new();
-    for topic_filter in subscribe.topic_filters.iter() {
-        if topic_filter.filter.starts_with("$shared") {
+    for topic_filter_from_subscription in subscribe.topic_filters.iter() {
+        if topic_filter_from_subscription.filter.starts_with("$shared") {
             todo!("handle shared subscriptions.");
         }
 
-        let t = TopicFilter::new(&topic_filter.filter);
+        reasons.push(
+            match TopicFilter::new(&topic_filter_from_subscription.filter) {
+                Ok(topic_filter) => {
+                    session
+                        .add_subscription(
+                            topic_filter_from_subscription.filter.clone(),
+                            ClientSubscription {
+                                topic_filter,
+                                subscription_identifier: subscribe.subscription_identifier,
+                                maximum_qos: topic_filter_from_subscription.maximum_qos.clone(),
+                                retain_as_published: topic_filter_from_subscription
+                                    .retain_as_published,
+                            },
+                        )
+                        .await?;
 
-        if t.is_err() {
-            // TODO: invalid topic filter
-            reasons.push(SubscribeReason::UnspecifiedError);
-            continue;
-        }
-
-        subscriptions.insert(
-            topic_filter.filter.clone(),
-            ClientSubscription {
-                topic_filter: t.unwrap(),
-                subscription_identifier: subscribe.subscription_identifier,
-                maximum_qos: topic_filter.maximum_qos.clone(),
-                retain_as_published: topic_filter.retain_as_published,
+                    SubscribeReason::GrantedQoS0
+                }
+                Err(_) => SubscribeReason::UnspecifiedError,
             },
         );
-
-        reasons.push(SubscribeReason::GrantedQoS0);
     }
 
     framed
@@ -591,10 +623,13 @@ async fn handle_publish(
         None => &publish.topic_name,
     };
 
-    broadcast_tx.send(ClientBroadcastMessage::Publish(Arc::new(Publish {
-        topic_name: topic_name.to_string(),
-        ..publish
-    })))?;
+    broadcast_tx.send(ClientBroadcastMessage::Publish {
+        received_instant: Instant::now(),
+        publish: Arc::new(Publish {
+            topic_name: topic_name.to_string(),
+            ..publish
+        }),
+    })?;
 
     Ok(())
 }

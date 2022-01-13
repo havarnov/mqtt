@@ -1,7 +1,7 @@
 use itertools::Itertools;
 
 #[derive(Debug)]
-pub(crate) struct TopicFilter {
+pub struct TopicFilter {
     segments: Vec<Segment>,
 }
 

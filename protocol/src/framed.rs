@@ -13,7 +13,7 @@ pub struct MqttPacketDecoder {}
 #[derive(Debug)]
 pub enum MqttPacketEncoderError {
     IOError(std::io::Error),
-    Internal
+    Internal,
 }
 
 impl From<std::io::Error> for MqttPacketEncoderError {

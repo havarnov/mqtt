@@ -4,10 +4,6 @@ version = "0.1.0"
 authors = ["Håvar Nøvik <havar.novik@gmail.com>"]
 edition = "2018"
 
-[lib]
-name = "mqtt_server"
-path = "src/lib.rs"
-
 [[bin]]
 name = "mqtt_server_bin"
 path = "src/main.rs"
