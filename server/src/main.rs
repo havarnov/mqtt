@@ -20,6 +20,7 @@ use mqtt_protocol::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
     SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
 };
+use mqtt_protocol::types::UnsubscribeReason::UnspecifiedError;
 
 // TODO: consts that should be configurable
 const MAX_KEEP_ALIVE: u16 = 60;
@@ -156,12 +157,12 @@ async fn process<Session: session::Session>(
                         let framed = framed.as_mut().expect("must be some at this point");
 
                         let mut reasons = Vec::new();
-                        for unsubscribe_topic_filter in unsubscribe.topic_filters.iter() {
-                            if session.remove_subscription(unsubscribe_topic_filter.to_owned()).await?.is_none() {
-                                reasons.push(UnsubscribeReason::NoSubscriptionExisted);
-                            } else {
-                                reasons.push(UnsubscribeReason::Success);
-                            }
+                        for unsubscribe_topic_filter in unsubscribe.topic_filters {
+                            reasons.push(match session.remove_subscription(unsubscribe_topic_filter.to_owned()).await {
+                                Ok(Some(_)) => UnsubscribeReason::Success,
+                                Ok(None) => UnsubscribeReason::NoSubscriptionExisted,
+                                Err(_) => UnsubscribeReason::UnspecifiedError,
+                            });
                         }
 
                         framed.send(MqttPacket::UnsubAck(UnsubAck {
