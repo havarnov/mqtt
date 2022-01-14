@@ -2,7 +2,7 @@
 name = "mqtt-protocol"
 version = "0.1.0"
 authors = ["Håvar Nøvik <havar.novik@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies.bytes]
 version = "1.0.1"
