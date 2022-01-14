@@ -291,6 +291,17 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
             Err(nom::Err::Incomplete(n)) => return Err(nom::Err::Incomplete(n)),
         }?;
 
+    let will_qos = match will_qos {
+        0u8 => QoS::AtMostOnce,
+        1u8 => QoS::AtLeastOnce,
+        2u8 => QoS::ExactlyOnce,
+        _ => {
+            return Err(nom::Err::Failure(MalformedPacket(
+                "Only 0|1|2 is valid QoS values.".to_owned(),
+            )))
+        }
+    };
+
     let (input, keep_alive) = u16(Endianness::Big)(input)?;
 
     let (input, properties) = parse_properties(input)?;

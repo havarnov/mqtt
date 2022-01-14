@@ -117,7 +117,7 @@ pub struct UserProperty {
 #[derive(Debug, PartialEq)]
 pub struct Will {
     pub retain: bool,
-    pub qos: u8,
+    pub qos: QoS,
     pub topic: String,
     pub payload: Vec<u8>,
     // properties

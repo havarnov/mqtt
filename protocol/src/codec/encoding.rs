@@ -511,10 +511,9 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
         }
 
         match will.qos {
-            1u8 => connect_flags |= 0b0000_1000u8,
-            2u8 => connect_flags |= 0b0001_0000u8,
-            0u8 => (),
-            _ => unreachable!(),
+            QoS::AtLeastOnce => connect_flags |= 0b0000_1000u8,
+            QoS::ExactlyOnce => connect_flags |= 0b0001_0000u8,
+            QoS::AtMostOnce => (),
         }
     }
 

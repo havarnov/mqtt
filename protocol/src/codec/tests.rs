@@ -147,7 +147,7 @@ packet_tests! {
             password: Some("PASSWORD".to_string()),
             will: Some(Will {
                 retain: false,
-                qos: 0,
+                qos: QoS::AtMostOnce,
                 topic: "foo".to_string(),
                 payload: vec![116, 97, 108, 116, 97, 108],
                 delay_interval: Some(1),

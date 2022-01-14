@@ -19,7 +19,7 @@ use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::{MqttPacketDecoder, MqttPacketEncoderError};
 use mqtt_protocol::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
-    SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
+    SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason, Will,
 };
 
 // TODO: consts that should be configurable
@@ -66,15 +66,44 @@ async fn process<Session: session::Session>(
 
     let mut topic_alias_map = HashMap::new();
 
+    let mut will: Option<Will> = None;
+    let will_expiry_timeout = sleep(Duration::ZERO);
+    // needed to be able to mutate without consuming.
+    // see https://docs.rs/tokio/latest/tokio/time/struct.Sleep.html
+    tokio::pin!(will_expiry_timeout);
+
     let mut since_last: tokio::time::Instant = tokio::time::Instant::now();
     let mut keep_alive = Duration::from_secs(0);
-    let keep_alive_timeout = sleep(keep_alive);
+    let keep_alive_timeout = sleep(Duration::ZERO);
     // needed to be able to mutate without consuming.
     // see https://docs.rs/tokio/latest/tokio/time/struct.Sleep.html
     tokio::pin!(keep_alive_timeout);
 
     loop {
         tokio::select! {
+            _ = &mut will_expiry_timeout, if framed.is_none() && will.is_some() => {
+                let will = will.take().expect("must be Some at this point.");
+
+                broadcast_tx.send(ClientBroadcastMessage::Publish {
+                        received_instant: Instant::now(),
+                        publish: Arc::new(Publish {
+                            duplicate: false,
+                            qos: will.qos,
+                            retain: will.retain,
+                            topic_name: will.topic,
+                            packet_identifier: None,
+                            payload_format_indicator: will.payload_format_indicator,
+                            message_expiry_interval: will.message_expiry_interval,
+                            topic_alias: None,
+                            response_topic: will.response_topic,
+                            correlation_data: will.correlation_data,
+                            user_properties: will.user_properties,
+                            subscription_identifier: None,
+                            content_type: will.content_type,
+                            payload: will.payload,
+                    }),
+                })?;
+            },
             _ = &mut keep_alive_timeout, if framed.is_some() => {
                 // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901045
                 // 3.1.2.10 Keep Alive
@@ -120,12 +149,33 @@ async fn process<Session: session::Session>(
                             _ => {}
                         }
                     }
-                    Some(Ok(MqttPacket::Disconnect(_d))) => {
+                    Some(Ok(MqttPacket::Disconnect(disconnect))) => {
                         println!("client disconnected.");
                         // 3.3.2.3.4 Topic Alias
-                        // Topic Alias mappings exist only within a Network Connection and last only for the lifetime of that Network Connection.
+                        // (...)
+                        // Topic Alias mappings exist only within a Network Connection and last only
+                        // for the lifetime of that Network Connection.
+                        // (...)
                         topic_alias_map.clear();
-                        // TODO: ???
+
+                        // 3.14.4 DISCONNECT Actions
+                        // (...)
+                        // On receipt of DISCONNECT with a Reason Code of 0x00 (Success) the Server:
+                        //   MUST discard any Will Message associated with the current Connection without
+                        //   publishing it [MQTT-3.14.4-3], as described in section 3.1.2.5.
+                        // (...)
+                        // 3.1.2.5 Will Flag
+                        // (...)
+                        // The Will Message MUST be removed from the stored Session State in the Server
+                        // once it has been published or the Server has received a DISCONNECT packet
+                        // with a Reason Code of 0x00 (Normal disconnection) from the Client [MQTT-3.1.2-10].
+                        // (...)
+                        // TODO: is it more correct with ```!= DisconnectReason::DisconnectWithWillMessage```?
+                        if disconnect.disconnect_reason == DisconnectReason::NormalDisconnection {
+                            will = None;
+                        }
+
+                        // Closing the network connection with the client.
                         framed = None;
                     }
                     Some(Ok(MqttPacket::Publish(publish))) => {
@@ -186,16 +236,26 @@ async fn process<Session: session::Session>(
                         println!("error: {}", e);
                     },
                     None => {
-                        // TODO: handle will
                         println!("client disconnected without disconnect packet.");
+
+                        // will handling
+                        if let Some(will) = will.as_ref() {
+                            will_expiry_timeout
+                                .as_mut()
+                                .reset(tokio::time::Instant::now() + Duration::from_secs(will.message_expiry_interval.unwrap_or(0) as u64));
+                        }
+
                         framed = None;
                     }
                 }
             },
-            client_message = connect_rx.recv() => {
-                match client_message {
+            connect_message = connect_rx.recv() => {
+                match connect_message {
                     Some(ConnectMessage { client_identifier, connect, framed: mut new_framed }) => {
                         since_last = tokio::time::Instant::now();
+
+                        // Will handling
+                        will = connect.will;
 
                         // 3.3.2.3.4 Topic Alias
                         // Topic Alias mappings exist only within a Network Connection and last only for the lifetime of that Network Connection.
