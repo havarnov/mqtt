@@ -335,23 +335,89 @@ pub enum QoS {
     ExactlyOnce = 2,
 }
 
+/// [3.3 PUBLISH – Publish message](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901100)
+///
+/// A PUBLISH packet is sent from a Client to a Server or from a Server to a Client to transport an Application Message.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Publish {
+    /// [3.3.1.1 DUP](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901102)
+    ///
+    /// If the DUP flag is set to 0, it indicates that this is the first occasion that the Client or
+    /// Server has attempted to send this PUBLISH packet. If the DUP flag is set to 1, it indicates
+    /// that this might be re-delivery of an earlier attempt to send the packet.
     pub duplicate: bool,
+
+    /// [3.3.1.2 QoS](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901103)
+    ///
+    /// This field indicates the level of assurance for delivery of an Application Message.
     pub qos: QoS,
+
+    /// [3.3.1.3 RETAIN](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901104)
+    ///
+    /// If the RETAIN flag is set to 1 in a PUBLISH packet sent by a Client to a Server, the Server
+    /// MUST replace any existing retained message for this topic and store the Application Message [MQTT-3.3.1-5],
+    /// so that it can be delivered to future subscribers whose subscriptions match its Topic Name.
     pub retain: bool,
+
+    /// [3.3.2.1 Topic Name](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901107)
+    ///
+    /// The Topic Name identifies the information channel to which Payload data is published.
     pub topic_name: String,
+
+    /// [3.3.2.2 Packet Identifier](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901108)
+    ///
+    /// The Packet Identifier field is only present in PUBLISH packets where the QoS level is 1 or 2.
     pub packet_identifier: Option<u16>,
-    // properties
+
+    /// [3.3.2.3.2 Payload Format Indicator](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901111)
+    ///
+    /// (...) the value of the Payload Format Indicator, either of:
+    /// * 0 (0x00) Byte Indicates that the Will Message is unspecified bytes, which is equivalent to not sending a Payload Format Indicator.
+    /// * 1 (0x01) Byte Indicates that the Will Message is UTF-8 Encoded Character Data. The UTF-8 data in the Payload MUST be well-formed UTF-8 as defined by the Unicode specification [Unicode] and restated in RFC 3629 [RFC3629].
     pub payload_format_indicator: Option<u8>,
+
+    /// [3.3.2.3.3 Message Expiry Interval](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901112)
+    ///
+    /// (...) is the lifetime of the Application Message in seconds.
     pub message_expiry_interval: Option<u32>,
+
+    /// [3.3.2.3.4 Topic Alias](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901113)
+    ///
+    /// A Topic Alias is an integer value that is used to identify the Topic instead of using the Topic Name.
     pub topic_alias: Option<u16>,
+
+    /// [3.3.2.3.5 Response Topic](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901114)
+    ///
+    /// (...) is used as the Topic Name for a response message.
     pub response_topic: Option<String>,
+
+    /// [3.3.2.3.6 Correlation Data](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901115)
+    ///
+    /// The Correlation Data is used by the sender of the Request Message to identify which request
+    /// the Response Message is for when it is received.
     pub correlation_data: Option<Vec<u8>>,
+
+    /// [3.3.2.3.7 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901116)
+    ///
+    /// This property is intended to provide a means of transferring application layer name-value
+    /// tags whose meaning and interpretation are known only by the application programs responsible
+    /// for sending and receiving them.
     pub user_properties: Option<Vec<UserProperty>>,
+
+    /// [3.3.2.3.8 Subscription Identifier](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901117)
+    ///
+    /// (...) representing the identifier of the subscription.
     pub subscription_identifier: Option<u32>,
+
+    /// [3.3.2.3.9 Content Type](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901118)
+    ///
+    /// (...) describing the content of the Application Message.
     pub content_type: Option<String>,
-    // actual payload
+
+    /// [3.3.3 PUBLISH Payload](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901119)
+    ///
+    /// The Payload contains the Application Message that is being published.
+    /// The content and format of the data is application specific.
     pub payload: Vec<u8>,
 }
 

@@ -352,6 +352,10 @@ async fn process<Session: session::Session>(
             },
             client_broadcast_message = broadcast_rx.recv() => {
                 match client_broadcast_message {
+                    // TODO:
+                    // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901117
+                    // Multiple Subscription Identifiers will be included if the publication is the
+                    // result of a match to more than one subscription, in this case their order is not significant.
                     Ok(ClientBroadcastMessage::Publish { received_instant, publish }) => {
                         if framed.is_none() {
                             todo!("impl incoming subscription if no network connection with client.");
