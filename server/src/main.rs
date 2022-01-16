@@ -1,13 +1,16 @@
 mod session;
 mod topic_filter;
 
+#[cfg(test)]
+mod tests;
+
 use dashmap::mapref::entry::Entry;
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::SendError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -16,7 +19,7 @@ use tokio_util::codec::Framed;
 
 use crate::session::{ClientSubscription, MemorySessionProvider, SessionError, SessionProvider};
 use crate::topic_filter::TopicFilter;
-use mqtt_protocol::framed::{MqttPacketDecoder, MqttPacketEncoderError};
+use mqtt_protocol::framed::{MqttPacketDecoder, MqttPacketDecoderError, MqttPacketEncoderError};
 use mqtt_protocol::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
     SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason, Will,
@@ -25,6 +28,24 @@ use mqtt_protocol::types::{
 // TODO: consts that should be configurable
 const MAX_KEEP_ALIVE: u16 = 60;
 const MAX_CONNECT_DELAY: Duration = Duration::from_millis(20000);
+
+trait MqttSinkStream:
+    SinkExt<MqttPacket, Error = MqttPacketEncoderError>
+    + StreamExt<Item = Result<MqttPacket, MqttPacketDecoderError>>
+    + std::marker::Unpin
+    + std::fmt::Debug
+    + std::marker::Send
+{
+}
+
+impl<T> MqttSinkStream for T where
+    T: SinkExt<MqttPacket, Error = MqttPacketEncoderError>
+        + StreamExt<Item = Result<MqttPacket, MqttPacketDecoderError>>
+        + std::marker::Unpin
+        + std::fmt::Debug
+        + std::marker::Send
+{
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -45,23 +66,28 @@ async fn listener<P: 'static + SessionProvider>(session_provider: P) -> Result<(
 
         let handler = handler.clone();
         let broadcast_tx = broadcast_tx.clone();
+        let framed = Framed::new(stream, MqttPacketDecoder {});
 
         // Spawn our handler to be run asynchronously.
         tokio::spawn(async move {
             println!("accepted connection");
-            if let Err(e) = handler.incoming_connection(stream, broadcast_tx).await {
+            if let Err(e) = handler.incoming_connection(framed, broadcast_tx).await {
                 println!("an error occurred; error = {:?}", e);
             }
         });
     }
 }
 
-async fn process<Session: session::Session>(
-    mut connect_rx: UnboundedReceiver<ConnectMessage>,
+// async fn process<Session: session::Session, T: SinkExt<MqttPacket, Error = MqttPacketEncoderError> + StreamExt<Item = Result<MqttPacket, MqttPacketDecoderError>> + std::marker::Unpin>(
+async fn process<Session: session::Session, T: MqttSinkStream>(
+    mut connect_rx: UnboundedReceiver<ConnectMessage<T>>,
     broadcast_tx: broadcast::Sender<ClientBroadcastMessage>,
     mut session: Session,
-) -> Result<(), Box<dyn Error>> {
-    let mut framed: Option<Framed<TcpStream, MqttPacketDecoder>> = None;
+) -> Result<(), Box<dyn Error>>
+where
+    <T as futures::Sink<MqttPacket>>::Error: std::error::Error,
+{
+    let mut framed: Option<T> = None;
     let mut broadcast_rx = broadcast_tx.subscribe();
 
     let mut topic_alias_map = HashMap::new();
@@ -436,25 +462,23 @@ enum ClientBroadcastMessage {
 }
 
 #[derive(Debug)]
-struct ConnectMessage {
+struct ConnectMessage<T: MqttSinkStream> {
     client_identifier: ClientIdentifier,
     connect: Connect,
-    framed: Framed<TcpStream, MqttPacketDecoder>,
+    framed: T,
 }
 
-struct IncomingConnectionHandler<P: SessionProvider> {
-    clients: dashmap::DashMap<String, UnboundedSender<ConnectMessage>>,
+struct IncomingConnectionHandler<P: SessionProvider, T: MqttSinkStream> {
+    clients: dashmap::DashMap<String, UnboundedSender<ConnectMessage<T>>>,
     session_provider: P,
 }
 
-impl<P: 'static + SessionProvider> IncomingConnectionHandler<P> {
+impl<P: 'static + SessionProvider, T: 'static + MqttSinkStream> IncomingConnectionHandler<P, T> {
     async fn incoming_connection(
         &self,
-        stream: TcpStream,
+        mut framed: T,
         broadcast: broadcast::Sender<ClientBroadcastMessage>,
     ) -> Result<(), Box<dyn Error>> {
-        let mut framed = Framed::new(stream, MqttPacketDecoder {});
-
         let (client_identifier, connect) = handle_connect(&mut framed).await?;
 
         match self
@@ -534,8 +558,9 @@ impl ClientIdentifier {
     }
 }
 
-async fn handle_connect(
-    framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+async fn handle_connect<T: MqttSinkStream>(
+    framed: &mut T,
+    // framed: &mut Framed<TcpStream, MqttPacketDecoder>,
 ) -> Result<(ClientIdentifier, Connect), Box<dyn Error>> {
     let connection_timeout = sleep(MAX_CONNECT_DELAY);
     tokio::select! {
@@ -553,7 +578,7 @@ async fn handle_connect(
                 }
                 a => {
                     println!("Connection error: {:?}", a);
-                    Err(Box::new(ClientHandlerError::ConnectError))
+                    Err(Box::new(ClientHandlerError::ConnectNotFirstPacket))
                 },
         },
         _ = connection_timeout => {
@@ -561,7 +586,7 @@ async fn handle_connect(
             //   If the Server does not receive a CONNECT packet within a reasonable amount
             //   of time after the Network Connection is established, the Server SHOULD close the Network Connection.
             println!("connection timeout");
-            Err(Box::new(ClientHandlerError::ConnectError))
+            Err(Box::new(ClientHandlerError::ConnectTimeoutError))
         }
     }
 }
@@ -592,8 +617,10 @@ impl std::fmt::Display for HandleSubscribeError {
 
 impl std::error::Error for HandleSubscribeError {}
 
-async fn handle_subscribe<Session: session::Session>(
-    framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+// async fn handle_subscribe<Session: session::Session, T: SinkExt<MqttPacket> + std::marker::Unpin>(
+async fn handle_subscribe<Session: session::Session, T: MqttSinkStream>(
+    // framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+    framed: &mut T,
     session: &mut Session,
     subscribe: Subscribe,
 ) -> Result<(), HandleSubscribeError> {
@@ -665,8 +692,9 @@ impl std::fmt::Display for HandlePublishError {
 
 impl std::error::Error for HandlePublishError {}
 
-async fn handle_publish(
-    framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+async fn handle_publish<T: MqttSinkStream>(
+    // framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+    framed: &mut T,
     topic_alias_map: &mut HashMap<u16, String>,
     publish: Publish,
     broadcast_tx: &broadcast::Sender<ClientBroadcastMessage>,
@@ -734,9 +762,8 @@ async fn handle_publish(
 
 #[derive(Debug, Clone)]
 enum ClientHandlerError {
-    ConnectError,
-    DisconnectError,
-    KeepAliveTimeout,
+    ConnectNotFirstPacket,
+    ConnectTimeoutError,
 }
 
 impl std::fmt::Display for ClientHandlerError {
