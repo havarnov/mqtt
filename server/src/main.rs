@@ -558,10 +558,24 @@ impl ClientIdentifier {
     }
 }
 
+#[derive(Debug, Clone)]
+enum HandleConnectError {
+    ConnectNotFirstPacket,
+    ConnectTimeoutError,
+}
+
+impl std::fmt::Display for HandleConnectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "something happened during connection.")
+    }
+}
+
+impl std::error::Error for HandleConnectError {}
+
 async fn handle_connect<T: MqttSinkStream>(
     framed: &mut T,
     // framed: &mut Framed<TcpStream, MqttPacketDecoder>,
-) -> Result<(ClientIdentifier, Connect), Box<dyn Error>> {
+) -> Result<(ClientIdentifier, Connect), HandleConnectError> {
     let connection_timeout = sleep(MAX_CONNECT_DELAY);
     tokio::select! {
         packet = framed.next() =>
@@ -578,7 +592,7 @@ async fn handle_connect<T: MqttSinkStream>(
                 }
                 a => {
                     println!("Connection error: {:?}", a);
-                    Err(Box::new(ClientHandlerError::ConnectNotFirstPacket))
+                    Err(HandleConnectError::ConnectNotFirstPacket)
                 },
         },
         _ = connection_timeout => {
@@ -586,7 +600,7 @@ async fn handle_connect<T: MqttSinkStream>(
             //   If the Server does not receive a CONNECT packet within a reasonable amount
             //   of time after the Network Connection is established, the Server SHOULD close the Network Connection.
             println!("connection timeout");
-            Err(Box::new(ClientHandlerError::ConnectTimeoutError))
+            Err(HandleConnectError::ConnectTimeoutError)
         }
     }
 }
@@ -759,17 +773,3 @@ async fn handle_publish<T: MqttSinkStream>(
 
     Ok(())
 }
-
-#[derive(Debug, Clone)]
-enum ClientHandlerError {
-    ConnectNotFirstPacket,
-    ConnectTimeoutError,
-}
-
-impl std::fmt::Display for ClientHandlerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "something happened during connection.")
-    }
-}
-
-impl std::error::Error for ClientHandlerError {}
