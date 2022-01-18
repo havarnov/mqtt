@@ -49,6 +49,8 @@ impl<T> MqttSinkStream for T where
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    console_subscriber::init();
+
     let session_provider = MemorySessionProvider::new();
     listener(session_provider).await
 }
