@@ -76,7 +76,7 @@ async fn handle_connect_server_assigned_client_identifier() -> Result<(), Box<dy
         ))
         .await?;
 
-    let (client_identifier, connect) = handle_connect(&mut server_side).await?;
+    let (client_identifier, _connect) = handle_connect(&mut server_side).await?;
 
     match client_identifier {
         ClientIdentifier::ServerAssigned { client_identifier } => {
@@ -101,7 +101,7 @@ async fn handle_connect_normal_client_identifier() -> Result<(), Box<dyn Error>>
         ))
         .await?;
 
-    let (client_identifier, connect) = handle_connect(&mut server_side).await?;
+    let (client_identifier, _connect) = handle_connect(&mut server_side).await?;
 
     match client_identifier {
         ClientIdentifier::Normal { client_identifier } => assert_eq!("test", &client_identifier),
