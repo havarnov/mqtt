@@ -1,8 +1,8 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::types::{
-    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
-    QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe,
-    UnsubscribeReason, UserProperty, Will,
+    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, PubAck,
+    PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, TopicFilter,
+    UnsubAck, Unsubscribe, UnsubscribeReason, UserProperty, Will,
 };
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
@@ -678,6 +678,55 @@ fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
     ))
 }
 
+fn parse_puback(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], PubAck> {
+    let (input, packet_identifier) = u16(Endianness::Big)(input)?;
+    match packet_size {
+        i if i < 2 => Err(nom::Err::Failure(MalformedPacket(
+            "PubAck packet size must be at least 2 to be able to get the packet identifier."
+                .to_string(),
+        ))),
+        2 => Ok((
+            input,
+            PubAck {
+                packet_identifier,
+                reason: PubAckReason::Success,
+                reason_string: None,
+                user_properties: None,
+            },
+        )),
+        _ => {
+            let (input, reason) = take(1usize)(input)?;
+            let reason = match reason[0] {
+                0u8 => PubAckReason::Success,
+                16u8 => PubAckReason::NoMatchingSubscribers,
+                128u8 => PubAckReason::UnspecifiedError,
+                131u8 => PubAckReason::ImplementationSpecificError,
+                135u8 => PubAckReason::NotAuthorized,
+                144u8 => PubAckReason::TopicNameInvalid,
+                145u8 => PubAckReason::PacketIdentifierInUse,
+                151u8 => PubAckReason::QuotaExceeded,
+                153u8 => PubAckReason::PayloadFormatInvalid,
+                unknown_code => {
+                    return Err(nom::Err::Failure(MalformedPacket(format!(
+                        "PubAck reason was not valid reason code: {}.",
+                        unknown_code
+                    ))))
+                }
+            };
+            let (input, properties) = parse_properties(input)?;
+            Ok((
+                input,
+                PubAck {
+                    packet_identifier,
+                    reason,
+                    reason_string: properties.reason_string,
+                    user_properties: properties.user_properties,
+                },
+            ))
+        }
+    }
+}
+
 pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
     let (rest, header) = parse_header(input)?;
 
@@ -686,6 +735,11 @@ pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
         2u8 => map(parse_connack, MqttPacket::ConnAck)(rest),
         3u8 => parse_publish(header.packet_size, header.flags, rest)
             .map(|(r, publish)| (r, MqttPacket::Publish(publish))),
+        4u8 => parse_puback(header.packet_size, rest)
+            .map(|(r, puback)| (r, MqttPacket::PubAck(puback))),
+        5u8 => todo!("Impl. decoding of PubRec message"),
+        6u8 => todo!("Impl. decoding of PubRel message"),
+        7u8 => todo!("Impl. decoding of PubComp message"),
         8u8 => parse_subscribe(header.packet_size, rest)
             .map(|(r, subscribe)| (r, MqttPacket::Subscribe(subscribe))),
         9u8 => parse_suback(header.packet_size, rest)

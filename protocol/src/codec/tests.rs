@@ -1,11 +1,7 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
-use crate::types::{
-    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
-    RetainHandling, SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe,
-    UnsubscribeReason, Will,
-};
+use crate::types::{ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, PubAck, PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, TopicFilter, UnsubAck, Unsubscribe, UnsubscribeReason, Will};
 
 macro_rules! packet_tests {
     ($($name:ident: $value:expr,)*) => {
@@ -383,6 +379,52 @@ packet_tests! {
             reason_string: None,
             user_properties: None,
             reasons: vec![UnsubscribeReason::Success],
+        })
+    ),
+
+    puback_simple: (
+        &[
+            // -- Fixed header --
+            0b0100_0000u8,
+            2u8,
+
+            // -- Variable header --
+            // packet identifier (256)
+            1u8, 0u8,
+        ],
+        MqttPacket::PubAck(PubAck {
+            packet_identifier: 256u16,
+            reason: PubAckReason::Success,
+            reason_string: None,
+            user_properties: None,
+        })
+    ),
+
+    puback: (
+        &[
+            // -- Fixed header --
+            0b0100_0000u8,
+            13u8,
+
+            // -- Variable header --
+            // packet identifier (256)
+            1u8, 0u8,
+            // reason
+            153u8,
+
+            // -- Properties --
+            // property length
+            9u8,
+
+            0x1fu8,
+            0u8, 6u8, 0x66, 0x6f, 0x6f, 0x62, 0x61, 0x72,
+
+        ],
+        MqttPacket::PubAck(PubAck {
+            packet_identifier: 256u16,
+            reason: PubAckReason::PayloadFormatInvalid,
+            reason_string: Some("foobar".to_string()),
+            user_properties: None,
         })
     ),
 }

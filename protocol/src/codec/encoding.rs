@@ -1,7 +1,7 @@
 use crate::types::{
-    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, Publish,
-    QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, UnsubAck, Unsubscribe,
-    UnsubscribeReason,
+    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, PubAck,
+    PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, UnsubAck,
+    Unsubscribe, UnsubscribeReason,
 };
 
 fn encode_connect_reason(reason: &ConnectReason) -> u8 {
@@ -256,6 +256,44 @@ fn encode_qos(qos: &QoS) -> u8 {
         QoS::AtLeastOnce => 1,
         QoS::ExactlyOnce => 2,
     }
+}
+
+fn encode_puback(puback: &PubAck) -> Vec<u8> {
+    let mut variable_header = vec![];
+    variable_header.extend(puback.packet_identifier.to_be_bytes());
+
+    if puback.reason_string.is_some()
+        || puback.user_properties.is_some()
+        || puback.reason != PubAckReason::Success
+    {
+        let properties = Properties {
+            reason_string: puback.reason_string.to_owned(),
+            user_properties: puback.user_properties.to_owned(),
+            ..Default::default()
+        };
+
+        variable_header.push(match puback.reason {
+            PubAckReason::Success => 0u8,
+            PubAckReason::NoMatchingSubscribers => 16u8,
+            PubAckReason::UnspecifiedError => 128u8,
+            PubAckReason::ImplementationSpecificError => 131u8,
+            PubAckReason::NotAuthorized => 135u8,
+            PubAckReason::TopicNameInvalid => 144u8,
+            PubAckReason::PacketIdentifierInUse => 145u8,
+            PubAckReason::QuotaExceeded => 151u8,
+            PubAckReason::PayloadFormatInvalid => 153u8,
+        });
+
+        variable_header.extend(&encode_properties(&properties));
+    }
+
+    let total_len = &encode_variable_u32(variable_header.len() as u32);
+    let mut result = Vec::with_capacity(variable_header.len() + total_len.len() + 1);
+    result.push(0b0100_0000);
+    result.extend(total_len);
+    result.extend(&variable_header);
+
+    result
 }
 
 fn encode_unsuback(unsuback: &UnsubAck) -> Vec<u8> {
@@ -554,8 +592,6 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
     payload.extend(&encode_string(&connect.client_identifier));
 
     if let Some(will) = &connect.will {
-        println!("{:?}", will);
-
         let will_properties = Properties {
             will_delay_interval: will.delay_interval,
             payload_format_indicator: will.payload_format_indicator,
@@ -605,6 +641,7 @@ pub fn encode(packet: &MqttPacket) -> Vec<u8> {
         MqttPacket::Unsubscribe(unsubscribe) => encode_unsubscribe(unsubscribe),
         MqttPacket::UnsubAck(unsuback) => encode_unsuback(unsuback),
         MqttPacket::Disconnect(disconnect) => encode_disconnect(disconnect),
+        MqttPacket::PubAck(puback) => encode_puback(puback),
         _ => unimplemented!("to_bytes"),
     }
 }

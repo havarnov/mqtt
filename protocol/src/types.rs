@@ -3,7 +3,7 @@ pub enum MqttPacket {
     Connect(Connect),
     ConnAck(ConnAck),
     Publish(Publish),
-    PubAck,  // TODO: impl decode/encode
+    PubAck(PubAck),
     PubRec,  // TODO: impl decode/encode
     PubRel,  // TODO: impl decode/encode
     PubComp, // TODO: impl decode/encode
@@ -419,6 +419,70 @@ pub struct Publish {
     /// The Payload contains the Application Message that is being published.
     /// The content and format of the data is application specific.
     pub payload: Vec<u8>,
+}
+
+/// [3.4.2.1 PUBACK Reason Code](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901124)
+#[derive(Debug, PartialEq)]
+pub enum PubAckReason {
+    /// 0 - The message is accepted. Publication of the QoS 1 message proceeds.
+    Success,
+
+    /// 16 - The message is accepted but there are no subscribers.
+    /// This is sent only by the Server. If the Server knows that there are no matching subscribers,
+    /// it MAY use this Reason Code instead of 0x00 (Success).
+    NoMatchingSubscribers,
+
+    /// 128 - The receiver does not accept the publish but either does not want to reveal the reason,
+    /// or it does not match one of the other values.
+    UnspecifiedError,
+
+    /// 131 - The PUBLISH is valid but the receiver is not willing to accept it.
+    ImplementationSpecificError,
+
+    /// 135 - The PUBLISH is not authorized.
+    NotAuthorized,
+
+    /// 144 - The Topic Name is not malformed, but is not accepted by this Client or Server.
+    TopicNameInvalid,
+
+    /// 145 - The Packet Identifier is already in use. This might indicate a mismatch in the
+    /// Session State between the Client and Server.
+    PacketIdentifierInUse,
+
+    /// 151 - An implementation or administrative imposed limit has been exceeded.
+    QuotaExceeded,
+
+    /// 153 - The payload format does not match the specified Payload Format Indicator.
+    PayloadFormatInvalid,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PubAck {
+    /// [3.4.2 PUBACK Variable Header](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901123)
+    ///
+    /// (...) Packet Identifier from the PUBLISH packet that is being acknowledged, (...)
+    pub packet_identifier: u16,
+
+    /// [3.4.2.1 PUBACK Reason Code](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901124)
+    ///
+    /// The Client or Server sending the PUBACK packet MUST use one of the PUBACK Reason Codes (...)
+    pub reason: PubAckReason,
+
+    /// [3.4.2.2.2 Reason String](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901127)
+    ///
+    /// (...) This Reason String is a human readable string designed for diagnostics and is not
+    /// intended to be parsed by the receiver.
+    ///
+    /// The sender uses this value to give additional information to the receiver. The sender MUST NOT
+    /// send this property if it would increase the size of the PUBACK packet beyond the
+    /// Maximum Packet Size specified by the receiver. It is a Protocol Error to include
+    /// the Reason String more than once.
+    pub reason_string: Option<String>,
+
+    /// [3.4.2.2.3 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901128)
+    ///
+    /// (...) This property can be used to provide additional diagnostic or other information. (...)
+    pub user_properties: Option<Vec<UserProperty>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]

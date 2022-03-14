@@ -380,10 +380,16 @@ where
             },
             client_broadcast_message = broadcast_rx.recv() => {
                 match client_broadcast_message {
-                    // TODO:
-                    // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901117
-                    // Multiple Subscription Identifiers will be included if the publication is the
-                    // result of a match to more than one subscription, in this case their order is not significant.
+                    // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901120
+                    // If the Client specified a Subscription Identifier for any of the overlapping
+                    // subscriptions the Server MUST send those Subscription Identifiers in the message
+                    // which is published as the result of the subscriptions [MQTT-3.3.4-3].
+                    // If the Server sends a single copy of the message it MUST include in the PUBLISH
+                    // packet the Subscription Identifiers for all matching subscriptions which have
+                    // a Subscription Identifiers, their order is not significant [MQTT-3.3.4-4].
+                    // If the Server sends multiple PUBLISH packets it MUST send, in each of them,
+                    // the Subscription Identifier of the matching subscription if it has a
+                    // Subscription Identifier [MQTT-3.3.4-5].
                     Ok(ClientBroadcastMessage::Publish { received_instant, publish }) => {
                         if framed.is_none() {
                             todo!("impl incoming subscription if no network connection with client.");
@@ -422,6 +428,8 @@ where
                                 // Message Expiry Interval set to the received value minus the time that
                                 // the Application Message has been waiting in the Server
                                 let message_expiry_interval = publish.message_expiry_interval.map(|e| e - (Instant::now() - received_instant).as_secs() as u32);
+
+                                // TODO: handle AtLeastOnce and ExactlyOnce
 
                                 let p = Publish {
                                     duplicate: false,
@@ -708,8 +716,8 @@ impl std::fmt::Display for HandlePublishError {
 
 impl std::error::Error for HandlePublishError {}
 
+/// Handles incoming PUBLISH packets sent from a client.
 async fn handle_publish<T: MqttSinkStream>(
-    // framed: &mut Framed<TcpStream, MqttPacketDecoder>,
     framed: &mut T,
     topic_alias_map: &mut HashMap<u16, String>,
     publish: Publish,
@@ -765,13 +773,24 @@ async fn handle_publish<T: MqttSinkStream>(
         None => &publish.topic_name,
     };
 
-    broadcast_tx.send(ClientBroadcastMessage::Publish {
+    let qos = publish.qos.clone();
+
+    match broadcast_tx.send(ClientBroadcastMessage::Publish {
         received_instant: Instant::now(),
         publish: Arc::new(Publish {
             topic_name: topic_name.to_string(),
             ..publish
         }),
-    })?;
+    }) {
+        Ok(estimated_receivers) => tracing::info!("An incoming PUBLISH message was sent to ~{} potential receivers.", estimated_receivers),
+        Err(_) => unreachable!("Since the caller of this function also holds a receiving end of this channel this can never fail."),
+    }
+
+    match qos {
+        QoS::AtMostOnce => {}
+        QoS::AtLeastOnce => todo!("not impl at least once in incoming PUBLISH handling."),
+        QoS::ExactlyOnce => todo!("not impl exactly once in incoming PUBLISH handling."),
+    }
 
     Ok(())
 }
