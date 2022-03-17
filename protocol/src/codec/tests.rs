@@ -278,6 +278,39 @@ packet_tests! {
         })
     ),
 
+    publish_qos0: (
+        &[
+            // -- Fixed header --
+            0b0011_1001u8,
+            12u8, // packet length
+
+            // -- Variable header --
+            // topic name (foobar)
+            0u8, 6u8, 0x66, 0x6F, 0x6F, 0x62, 0x61, 0x72,
+            // Properties
+            0u8, // property length
+
+            // -- Payload --
+            1u8, 3u8, 5u8,
+        ],
+        MqttPacket::Publish(Publish {
+            duplicate: true,
+            qos: QoS::AtMostOnce,
+            retain: true,
+            topic_name: "foobar".to_string(),
+            packet_identifier: None,
+            payload_format_indicator: None,
+            message_expiry_interval: None,
+            topic_alias: None,
+            response_topic: None,
+            correlation_data: None,
+            user_properties: None,
+            subscription_identifier: None,
+            content_type: None,
+            payload: vec![1u8, 3u8, 5u8],
+        }),
+    ),
+
     publish: (
         &[
             // -- Fixed header --
@@ -449,4 +482,23 @@ macro_rules! parsing_should_fail_tests {
 
 parsing_should_fail_tests! {
     pingreq_with_non_empty_flags: (&[0b1100_0001u8, 0u8], nom::Err::Failure(MalformedPacket("Parsing PingReq: can't have flags or packet size.".to_string()))),
+    publish_qos1_packet_identifier_0: (
+        &[
+            // -- Fixed header --
+            0b0011_1011u8,
+            14u8, // packet length
+
+            // -- Variable header --
+            // topic name (foobar)
+            0u8, 6u8, 0x66, 0x6F, 0x6F, 0x62, 0x61, 0x72,
+            // packet identifier
+            0u8, 0u8,
+            // Properties
+            0u8, // property length
+
+            // -- Payload --
+            1u8, 3u8, 5u8,
+        ],
+        nom::Err::Failure(MalformedPacket("QoS >= 1 requires non zero Packet Identifier.".to_string())),
+    ),
 }
