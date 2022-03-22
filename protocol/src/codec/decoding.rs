@@ -421,7 +421,9 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
     let (input, packet_identifier) = if qos != QoS::AtMostOnce {
         let (input, packet_identifier) = u16(Endianness::Big)(input)?;
         if packet_identifier == 0u16 {
-            return Err(nom::Err::Failure(MalformedPacket("QoS >= 1 requires non zero Packet Identifier.".to_string())));
+            return Err(nom::Err::Failure(MalformedPacket(
+                "QoS >= 1 requires non zero Packet Identifier.".to_string(),
+            )));
         }
         (input, Some(packet_identifier))
     } else {
