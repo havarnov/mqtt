@@ -16,18 +16,21 @@ use tokio::sync::broadcast::error::SendError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::{sleep, Instant};
 use tokio_util::codec::Framed;
+use tracing::trace;
 
 use crate::session::{ClientSubscription, MemorySessionProvider, SessionError, SessionProvider};
 use crate::topic_filter::TopicFilter;
 use mqtt_protocol::framed::{MqttPacketDecoder, MqttPacketDecoderError, MqttPacketEncoderError};
 use mqtt_protocol::types::{
-    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
-    SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason, Will,
+    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, PubAck,
+    PubAckReason, Publish, QoS, SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
+    Will,
 };
 
 // TODO: consts that should be configurable
 const MAX_KEEP_ALIVE: u16 = 60;
 const MAX_CONNECT_DELAY: Duration = Duration::from_millis(20000);
+const MAX_TOPIC_ALIAS: u16 = 10;
 
 trait MqttSinkStream:
     SinkExt<MqttPacket, Error = MqttPacketEncoderError>
@@ -214,12 +217,16 @@ where
                             publish,
                             &broadcast_tx)
                         .await {
-                            Ok(_) => (),
-                            Err(HandlePublishError::BroadcastSendError(error)) => return Err(Box::new(error)),
+                            Ok(()) => (),
+                            Err(HandlePublishError::TopicAliasError(error)) => {
+                                trace!("{}", error);
+                                framed = None;
+                            }
                             Err(HandlePublishError::FramedError(error)) => {
                                 println!("{:?}", error);
                                 framed = None;
                             }
+                            Err(HandlePublishError::BroadcastSendError(error)) => return Err(Box::new(error))
                         }
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
@@ -692,6 +699,7 @@ async fn handle_subscribe<Session: session::Session, T: MqttSinkStream>(
 
 #[derive(Debug)]
 enum HandlePublishError {
+    TopicAliasError(String),
     BroadcastSendError(SendError<ClientBroadcastMessage>),
     FramedError(MqttPacketEncoderError),
 }
@@ -725,8 +733,7 @@ async fn handle_publish<T: MqttSinkStream>(
 ) -> Result<(), HandlePublishError> {
     // 3.3.4 PUBLISH Actions
     let topic_name = match publish.topic_alias {
-        // TODO: configure max topic_alias
-        Some(topic_alias) if topic_alias == 0 => {
+        Some(topic_alias) if topic_alias == 0 || topic_alias > MAX_TOPIC_ALIAS => {
             framed
                 .send(MqttPacket::Disconnect(Disconnect {
                     disconnect_reason: DisconnectReason::TopicAliasInvalid,
@@ -736,7 +743,9 @@ async fn handle_publish<T: MqttSinkStream>(
                     reason_string: None,
                 }))
                 .await?;
-            return Ok(());
+            return Err(HandlePublishError::TopicAliasError(
+                "'topic_alias' is or > MAX_TOPIC_ALIAS.".to_string(),
+            ));
         }
         Some(topic_alias) if publish.topic_name.is_empty() => {
             if let Some(topic_name) = topic_alias_map.get(&topic_alias) {
@@ -751,7 +760,7 @@ async fn handle_publish<T: MqttSinkStream>(
                         reason_string: None,
                     }))
                     .await?;
-                return Ok(());
+                return Err(HandlePublishError::TopicAliasError(format!("Couldn't find the topic name from provided topic alias = {} and no topic name was provided.", topic_alias)));
             }
         }
         Some(topic_alias) => {
@@ -768,29 +777,59 @@ async fn handle_publish<T: MqttSinkStream>(
                     reason_string: None,
                 }))
                 .await?;
-            return Ok(());
+            return Err(HandlePublishError::TopicAliasError(
+                "Neither topic alias nor topic name was provided.".to_string(),
+            ));
         }
         None => &publish.topic_name,
     };
 
-    let qos = publish.qos.clone();
+    match &publish.qos {
+        QoS::AtMostOnce => {
+            broadcast_publish(
+                broadcast_tx,
+                Publish {
+                    topic_name: topic_name.to_string(),
+                    ..publish
+                },
+            );
+        }
+        QoS::AtLeastOnce => {
+            let packet_identifier = if let Some(packet_identifier) = publish.packet_identifier {
+                packet_identifier
+            } else {
+                todo!("error")
+            };
 
-    match broadcast_tx.send(ClientBroadcastMessage::Publish {
-        received_instant: Instant::now(),
-        publish: Arc::new(Publish {
-            topic_name: topic_name.to_string(),
-            ..publish
-        }),
-    }) {
-        Ok(estimated_receivers) => tracing::info!("An incoming PUBLISH message was sent to ~{} potential receivers.", estimated_receivers),
-        Err(_) => unreachable!("Since the caller of this function also holds a receiving end of this channel this can never fail."),
-    }
+            broadcast_publish(
+                broadcast_tx,
+                Publish {
+                    topic_name: topic_name.to_string(),
+                    ..publish
+                },
+            );
 
-    match qos {
-        QoS::AtMostOnce => {}
-        QoS::AtLeastOnce => todo!("not impl at least once in incoming PUBLISH handling."),
+            framed
+                .send(MqttPacket::PubAck(PubAck {
+                    packet_identifier,
+                    reason: PubAckReason::Success,
+                    reason_string: None,
+                    user_properties: None,
+                }))
+                .await?;
+        }
         QoS::ExactlyOnce => todo!("not impl exactly once in incoming PUBLISH handling."),
     }
 
     Ok(())
+}
+
+fn broadcast_publish(broadcast_tx: &broadcast::Sender<ClientBroadcastMessage>, publish: Publish) {
+    match broadcast_tx.send(ClientBroadcastMessage::Publish {
+        received_instant: Instant::now(),
+        publish: Arc::new(publish),
+    }) {
+        Ok(estimated_receivers) => tracing::info!("An incoming PUBLISH message was sent to ~{} potential receivers.", estimated_receivers),
+        Err(_) => unreachable!("Since the caller of this function also holds a receiving end of this channel this can never fail."),
+    };
 }
