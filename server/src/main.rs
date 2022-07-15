@@ -157,7 +157,7 @@ where
                 match packet {
                     Some(Ok(MqttPacket::Connect(_))) => {
                         // A Connect packet can only come to the processor through the ConnectMessage
-                        // and if we every end up here it means the client has sent multiple Connect packets.
+                        // and if we ever end up here it means the client has sent multiple Connect packets.
                         // Therefore we're closing the network connection.
                         // From the spec:
                         //
@@ -263,6 +263,10 @@ where
                             user_properties: None,
                             reasons,
                         })).await?;
+                    }
+                    Some(Ok(MqttPacket::PubAck(puback))) => {
+                        println!("client sent a puback packet: {:?}.", puback);
+                        todo!("handle puback packet from client.");
                     }
                     Some(Ok(_)) => {
                         unimplemented!("packet type not impl.")
@@ -398,20 +402,20 @@ where
                     // the Subscription Identifier of the matching subscription if it has a
                     // Subscription Identifier [MQTT-3.3.4-5].
                     Ok(ClientBroadcastMessage::Publish { received_instant, publish }) => {
-                        if framed.is_none() {
-                            todo!("impl incoming subscription if no network connection with client.");
-                        } else {
-                            let subscriptions = match session.get_subscriptions().await {
-                                Ok(subscriptions) => subscriptions,
-                                Err(_) => todo!("handle session error")
-                            };
+                        let subscriptions = match session.get_subscriptions().await {
+                            Ok(subscriptions) => subscriptions,
+                            Err(_) => todo!("handle session error")
+                        };
 
-                            for subscription  in subscriptions {
+                        let publish_messages_to_send =
+                            subscriptions
+                            .iter()
+                            .filter_map(|subscription| {
 
                                 // TODO: handle retain_handling
 
                                 if !subscription.topic_filter.matches(&publish.topic_name) {
-                                    continue;
+                                    return None;
                                 }
 
                                 let qos = if subscription.maximum_qos > publish.qos {
@@ -438,7 +442,7 @@ where
 
                                 // TODO: handle AtLeastOnce and ExactlyOnce
 
-                                let p = Publish {
+                                let publish = Publish {
                                     duplicate: false,
                                     qos,
                                     retain,
@@ -455,10 +459,36 @@ where
                                     payload: publish.payload.clone()
                                 };
 
-                                if framed.as_mut().expect("must be Some here.").send(MqttPacket::Publish(p)).await.is_err() {
-                                    println!("Framed send error");
-                                    framed = None;
-                                    break;
+                                Some(publish)
+                            })
+                            .collect::<Vec<_>>();
+
+                        for publish in publish_messages_to_send {
+
+                            let packet_identifier = publish.packet_identifier.clone();
+
+                            if framed.is_none() {
+                                if publish.qos == QoS::AtLeastOnce {
+                                    match session.add_unsent_atleastonce(packet_identifier.unwrap(), publish.clone()).await {
+                                        Ok(_) => (),
+                                        Err(_) => todo!("Handle session store error."),
+                                    }
+                                    // TODO: handle max messages in process?
+                                }
+
+                                // TODO: ???
+                            } else {
+                                match framed.as_mut().expect("must be some at this point.").send(MqttPacket::Publish(publish)).await {
+                                    Ok(()) => {
+                                        match session.unacked_atleastonce(packet_identifier.unwrap()).await {
+                                            Ok(_) => (),
+                                            Err(_) => todo!("Handle session store error."),
+                                        }
+                                    }
+                                    Err(_) => {
+                                        framed = None;
+                                        // TODO: sending of message failed, should the message be kept in the session state?
+                                    }
                                 }
                             }
                         }

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use mqtt_protocol::types::QoS;
+use mqtt_protocol::types::{Publish, QoS};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -11,6 +11,7 @@ use std::sync::{Arc, Weak};
 #[derive(Debug, Clone)]
 pub enum SessionError {
     SessionAlreadyActive,
+    AtLeastOnceError,
 }
 
 impl std::fmt::Display for SessionError {
@@ -26,7 +27,21 @@ pub(crate) struct MemorySession {
     /// None means that this session is currently active.
     end_timestamp: Option<DateTime<Utc>>,
     subscriptions: HashMap<String, ClientSubscription>,
+    unsent_atleastonce: HashMap<u16, Publish>,
+    unacked_atleastonce: HashMap<u16, Publish>,
     _strong: Arc<()>,
+}
+
+impl MemorySession {
+    pub fn new(strong: Arc<()>) -> Self {
+        MemorySession {
+            end_timestamp: None,
+            subscriptions: Default::default(),
+            unsent_atleastonce: Default::default(),
+            unacked_atleastonce: Default::default(),
+            _strong: strong,
+        }
+    }
 }
 
 #[async_trait]
@@ -64,6 +79,32 @@ impl Session for MemorySession {
     async fn get_subscriptions(&self) -> Result<Vec<&ClientSubscription>, SessionError> {
         Ok(self.subscriptions.values().collect())
     }
+
+    async fn add_unsent_atleastonce(
+        &mut self,
+        packet_identifier: u16,
+        publish: Publish,
+    ) -> Result<(), SessionError> {
+        self.unsent_atleastonce.insert(packet_identifier, publish);
+        Ok(())
+    }
+
+    async fn unacked_atleastonce(&mut self, packet_identifier: u16) -> Result<(), SessionError> {
+        match self.unsent_atleastonce.remove(&packet_identifier) {
+            Some(publish) => {
+                self.unacked_atleastonce.insert(packet_identifier, publish);
+                Ok(())
+            }
+            None => return Err(SessionError::AtLeastOnceError),
+        }
+    }
+
+    async fn ack_atleastonce(&mut self, packet_identifier: u16) -> Result<(), SessionError> {
+        match self.unacked_atleastonce.remove(&packet_identifier) {
+            Some(_) => Ok(()),
+            None => Err(SessionError::AtLeastOnceError),
+        }
+    }
 }
 
 pub(crate) struct MemorySessionProvider {
@@ -91,21 +132,13 @@ impl SessionProvider for MemorySessionProvider {
                 let strong = Arc::new(());
                 let weak = Arc::downgrade(&strong);
                 occupied.replace_entry(weak);
-                Ok(MemorySession {
-                    end_timestamp: None,
-                    subscriptions: HashMap::new(),
-                    _strong: strong,
-                })
+                Ok(MemorySession::new(strong))
             }
             Entry::Vacant(vacant) => {
                 let strong = Arc::new(());
                 let weak = Arc::downgrade(&strong);
                 vacant.insert(weak);
-                Ok(MemorySession {
-                    end_timestamp: None,
-                    subscriptions: HashMap::new(),
-                    _strong: strong,
-                })
+                Ok(MemorySession::new(strong))
             }
         }
     }
@@ -134,6 +167,13 @@ pub trait Session: Send + Sync {
     ) -> Result<(), SessionError>;
     async fn remove_subscription(&mut self, topic: String) -> Result<Option<()>, SessionError>;
     async fn get_subscriptions(&self) -> Result<Vec<&ClientSubscription>, SessionError>;
+    async fn add_unsent_atleastonce(
+        &mut self,
+        packet_identifier: u16,
+        publish: Publish,
+    ) -> Result<(), SessionError>;
+    async fn unacked_atleastonce(&mut self, packet_identifier: u16) -> Result<(), SessionError>;
+    async fn ack_atleastonce(&mut self, packet_identifier: u16) -> Result<(), SessionError>;
 }
 
 #[async_trait]
