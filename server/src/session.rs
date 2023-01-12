@@ -153,6 +153,12 @@ pub struct ClientSubscription {
 }
 
 #[async_trait]
+pub trait TransactionalSession: Send + Sync {
+    type S: Session;
+    async fn begin(&mut self) -> Result<(), Self::S>;
+}
+
+#[async_trait]
 pub trait Session: Send + Sync {
     async fn clear(&mut self) -> Result<(), SessionError>;
     async fn set_endtimestamp(

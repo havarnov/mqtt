@@ -855,6 +855,8 @@ async fn handle_publish<T: MqttSinkStream>(
 }
 
 fn broadcast_publish(broadcast_tx: &broadcast::Sender<ClientBroadcastMessage>, publish: Publish) {
+    // TODO: store to some session and let another task handle the broadcast publish,
+    // this will mean that a PubAck sent from the server actually means that the message will be processed
     match broadcast_tx.send(ClientBroadcastMessage::Publish {
         received_instant: Instant::now(),
         publish: Arc::new(publish),
