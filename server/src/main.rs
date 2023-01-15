@@ -20,8 +20,8 @@ use tracing::trace;
 
 use crate::session::{ClientSubscription, MemorySessionProvider, SessionError, SessionProvider};
 use crate::topic_filter::TopicFilter;
-use mqtt_protocol::codec::framed::{MqttPacketDecoder, MqttPacketDecoderError, MqttPacketEncoderError};
-use mqtt_protocol::types::{
+use mqtt_protocol::codec::{MqttPacketDecoder, MqttPacketDecoderError, MqttPacketEncoderError};
+use mqtt_protocol::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, PubAck,
     PubAckReason, Publish, QoS, SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
     Will,

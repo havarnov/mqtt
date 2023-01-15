@@ -1,7 +1,7 @@
 use crate::{handle_connect, ClientIdentifier, HandleConnectError};
 use futures::SinkExt;
-use mqtt_protocol::codec::framed::MqttPacketDecoder;
-use mqtt_protocol::types::{Connect, MqttPacket};
+use mqtt_protocol::codec::MqttPacketDecoder;
+use mqtt_protocol::{Connect, MqttPacket};
 use std::error::Error;
 use tokio::io::DuplexStream;
 use tokio_util::codec::Framed;

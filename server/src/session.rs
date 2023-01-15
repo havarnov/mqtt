@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use mqtt_protocol::types::{Publish, QoS};
+use mqtt_protocol::{Publish, QoS};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};

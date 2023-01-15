@@ -1,8 +1,10 @@
-pub mod decoding;
-pub mod encoding;
+mod decoding;
+mod encoding;
 
 #[cfg(feature = "framed")]
-pub mod framed;
+mod framed;
+
+pub use framed::*;
 
 #[cfg(test)]
 mod tests;
