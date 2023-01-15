@@ -20,7 +20,7 @@ use tracing::trace;
 
 use crate::session::{ClientSubscription, MemorySessionProvider, SessionError, SessionProvider};
 use crate::topic_filter::TopicFilter;
-use mqtt_protocol::framed::{MqttPacketDecoder, MqttPacketDecoderError, MqttPacketEncoderError};
+use mqtt_protocol::codec::framed::{MqttPacketDecoder, MqttPacketDecoderError, MqttPacketEncoderError};
 use mqtt_protocol::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, PubAck,
     PubAckReason, Publish, QoS, SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
@@ -478,11 +478,14 @@ where
 
                                 // TODO: ???
                             } else {
+                                let qos = publish.qos;
                                 match framed.as_mut().expect("must be some at this point.").send(MqttPacket::Publish(publish)).await {
                                     Ok(()) => {
-                                        match session.unacked_atleastonce(packet_identifier.unwrap()).await {
-                                            Ok(_) => (),
-                                            Err(_) => todo!("Handle session store error."),
+                                        if qos != QoS::AtMostOnce {
+                                            match session.unacked_atleastonce(packet_identifier.unwrap()).await {
+                                                Ok(_) => (),
+                                                Err(_) => todo!("Handle session store error."),
+                                            }
                                         }
                                     }
                                     Err(_) => {

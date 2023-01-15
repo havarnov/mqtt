@@ -8,16 +8,16 @@ use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
 use nom::bytes::streaming::take;
 use nom::combinator::{map, map_parser};
-use nom::error::Error;
+use nom::error::{Error, ParseError};
 use nom::number::streaming::{u16, u32};
 use nom::number::Endianness;
-use nom::sequence::tuple;
-use nom::{IResult, Needed};
+use nom::{InputIter, InputLength, InputTake, IResult, Needed, ToUsize};
 use std::num::NonZeroUsize;
+use std::ops::{Deref, Index};
 use std::str;
 
 #[derive(Debug, PartialEq)]
-pub enum MqttParserError<I> {
+pub(in crate) enum MqttParserError<I> {
     MalformedPacket(String),
     Nom(I, nom::error::ErrorKind),
 }
@@ -34,10 +34,10 @@ impl<I> nom::error::ParseError<I> for MqttParserError<I> {
 
 type MqttParserResult<I, O> = IResult<I, O, MqttParserError<I>>;
 
-pub(in crate::codec) struct MqttHeader {
-    pub(in crate::codec) packet_type: u8,
-    pub(in crate::codec) flags: u8,
-    pub(in crate::codec) packet_size: u32,
+pub(in crate) struct MqttHeader {
+    pub(in crate) packet_type: u8,
+    pub(in crate) flags: u8,
+    pub(in crate) packet_size: u32,
 }
 
 fn parse_first_byte(input: (&[u8], usize)) -> IResult<(&[u8], usize), (u8, u8)> {
@@ -53,20 +53,20 @@ fn parse_variable_u32(input: &[u8]) -> MqttParserResult<&[u8], u32> {
 
     let mut shift = 0;
     loop {
-        let (rest_next, size) = take(1usize)(rest)?;
+        let (rest_next, size) = take_first(rest)?;
         rest = rest_next;
 
-        if size[0] >= 128u8 {
-            result += (size[0] as u32 - 128u32) << (shift * 7);
+        if size >= 128u8 {
+            result += (size as u32 - 128u32) << (shift * 7);
             shift += 1;
         } else {
-            result += (size[0] as u32) << (shift * 7);
+            result += (size as u32) << (shift * 7);
             break Ok((rest, result));
         }
     }
 }
 
-pub(in crate::codec) fn parse_string(input: &[u8]) -> MqttParserResult<&[u8], String> {
+pub(in crate) fn parse_string(input: &[u8]) -> MqttParserResult<&[u8], String> {
     let (rest, length) = u16(Endianness::Big)(input)?;
     let (rest, string_bytes) = take(length)(rest)?;
     match str::from_utf8(string_bytes) {
@@ -83,7 +83,7 @@ fn parse_string_pair(input: &[u8]) -> MqttParserResult<&[u8], (String, String)> 
     Ok((input, (key, value)))
 }
 
-pub(in crate::codec) fn parse_header(input: &[u8]) -> MqttParserResult<&[u8], MqttHeader> {
+pub(in crate) fn parse_header(input: &[u8]) -> MqttParserResult<&[u8], MqttHeader> {
     let (rest, (packet_type, flags)) =
         match bits::<_, _, _, nom::error::Error<_>, _>(parse_first_byte)(input) {
             Ok(res) => Ok(res),
@@ -146,16 +146,6 @@ fn parse_qos(input: &[u8]) -> IResult<&[u8], QoS, MqttParserError<&[u8]>> {
     }
 }
 
-fn parse_u8_as_bool(input: &[u8]) -> IResult<&[u8], bool, MqttParserError<&[u8]>> {
-    match input[0] {
-        0u8 => Ok((&input[1..], false)),
-        1u8 => Ok((&input[1..], true)),
-        _ => Err(nom::Err::Failure(MalformedPacket(
-            "Only 0|1 are valid when parsing u8 to bool.".to_owned(),
-        ))),
-    }
-}
-
 fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
     if input.is_empty() {
         return Ok((input, Properties::default()));
@@ -171,7 +161,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
         let (rest_next, _) = match property_identifier {
             1u32 => map_to_property(
                 &mut props.payload_format_indicator,
-                map(take(1usize), |b: &[u8]| b[0])(rest_next)?,
+                take_first(rest_next)?,
             ),
             2u32 => map_to_property(
                 &mut props.message_expiry_interval,
@@ -193,7 +183,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
             ),
             18u32 => map_to_property(
                 &mut props.retain_available,
-                map_parser(take(1usize), parse_u8_as_bool)(rest_next)?,
+                map(take_first, |b| b != 0)(rest_next)?,
             ),
             19u32 => unimplemented!("Server Keep Alive"),
             21u32 => map_to_property(&mut props.authentication_method, parse_string(rest_next)?),
@@ -203,7 +193,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
             ),
             23u32 => map_to_property(
                 &mut props.request_problem_information,
-                map_parser(take(1usize), parse_u8_as_bool)(rest_next)?,
+                map(take_first, |b| b != 0)(rest_next)?,
             ),
             24u32 => map_to_property(
                 &mut props.will_delay_interval,
@@ -211,7 +201,7 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
             ),
             25u32 => map_to_property(
                 &mut props.request_response_information,
-                map_parser(take(1usize), parse_u8_as_bool)(rest_next)?,
+                map(take_first, |b| b != 0)(rest_next)?,
             ),
             26u32 => unimplemented!("Response Information"),
             28u32 => unimplemented!("Server Reference"),
@@ -256,6 +246,25 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
     Ok((input, props))
 }
 
+trait InputTakeFirst: InputIter
+{
+
+    fn take_first(&self) -> Self::Item;
+}
+
+impl InputTakeFirst for &[u8] {
+    fn take_first(&self) -> Self::Item {
+        self[0]
+    }
+}
+
+fn take_first<Input>(input: Input) -> MqttParserResult<Input, Input::Item>
+    where
+        Input: InputTake + InputLength + InputTakeFirst,
+{
+    map(take(1usize), |i: Input| i.take_first())(input)
+}
+
 fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
     let (input, protocol_name) = parse_string(input)?;
     if protocol_name != "MQTT" {
@@ -264,34 +273,13 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
         )));
     }
 
-    let (input, protocol_version) = take(1usize)(input)?;
-    let protocol_version = protocol_version[0];
+    let mut tt = map(take(1usize), |r: &[u8]| r[0]);
 
-    let (input, (user_name_flag, password_flag, will_retain, will_qos, will_flag, clean_start)) =
-        match bits::<_, (u8, u8, u8, u8, u8, u8), _, nom::error::Error<_>, _>(tuple((
-            bit_take::<_, _, _, Error<_>>(1usize),
-            bit_take::<_, _, _, Error<_>>(1usize),
-            bit_take::<_, _, _, Error<_>>(1usize),
-            bit_take::<_, _, _, Error<_>>(2usize),
-            bit_take::<_, _, _, Error<_>>(1usize),
-            bit_take::<_, _, _, Error<_>>(1usize),
-        )))(input)
-        {
-            Ok(res) => Ok(res),
-            Err(nom::Err::Failure(_)) => {
-                return Err(nom::Err::Failure(MqttParserError::MalformedPacket(
-                    "Parsing first byte of Connect failed.".to_owned(),
-                )));
-            }
-            Err(nom::Err::Error(_)) => {
-                return Err(nom::Err::Failure(MqttParserError::MalformedPacket(
-                    "Parsing first byte of Connect failed.".to_owned(),
-                )));
-            }
-            Err(nom::Err::Incomplete(n)) => return Err(nom::Err::Incomplete(n)),
-        }?;
+    let (input, protocol_version) = tt(input)?;
 
-    let will_qos = match will_qos {
+    let (input, flags) = tt(input)?;
+
+    let will_qos = match (flags & 0b00011000) >> 3 {
         0u8 => QoS::AtMostOnce,
         1u8 => QoS::AtLeastOnce,
         2u8 => QoS::ExactlyOnce,
@@ -308,7 +296,7 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
 
     let (input, client_identifier) = parse_string(input)?;
 
-    let (input, will) = if will_flag != 0u8 {
+    let (input, will) = if (flags & 0b00000100) != 0u8 {
         let (rest, will_properties) = parse_properties(input)?;
         let (rest, will_topic) = parse_string(rest)?;
         let (rest, will_payload) = parse_binary_data(rest)?;
@@ -316,7 +304,7 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
         (
             rest,
             Some(Will {
-                retain: will_retain != 0u8,
+                retain: (flags & 0b00100000)!= 0u8,
                 qos: will_qos,
                 topic: will_topic,
                 payload: will_payload.to_vec(),
@@ -333,13 +321,13 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
         (input, None)
     };
 
-    let (input, username) = if user_name_flag != 0u8 {
+    let (input, username) = if (flags & 0b10000000) != 0u8 {
         map(parse_string, Some)(input)?
     } else {
         (input, None)
     };
 
-    let (input, password) = if password_flag != 0u8 {
+    let (input, password) = if (flags & 0b01000000) != 0u8 {
         map(parse_string, Some)(input)?
     } else {
         (input, None)
@@ -354,7 +342,7 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
             username,
             password,
             will,
-            clean_start: clean_start != 0u8,
+            clean_start: (flags & 0b00000010) != 0u8,
             keep_alive,
             session_expiry_interval: properties.session_expiry_interval,
             receive_maximum: properties.receive_maximum,
@@ -383,8 +371,8 @@ fn parse_disconnect(input: &[u8]) -> MqttParserResult<&[u8], Disconnect> {
         ));
     }
 
-    let (input, disconnect_reason) = take(1usize)(input)?;
-    let disconnect_reason = match disconnect_reason[0] {
+    let (input, disconnect_reason) = take_first(input)?;
+    let disconnect_reason = match disconnect_reason {
         0u8 => DisconnectReason::NormalDisconnection,
         142u8 => DisconnectReason::SessionTakenOver,
         _ => unimplemented!(),
@@ -464,9 +452,9 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
     while remaining > 0 {
         let len = input.len();
         let (input_tmp, topic_name) = parse_string(input)?;
-        let (input_tmp, options) = take(1usize)(input_tmp)?;
+        let (input_tmp, options) = take_first(input_tmp)?;
 
-        let maximum_qos = match options[0] & 0b0000_0011u8 {
+        let maximum_qos = match options & 0b0000_0011u8 {
             0u8 => QoS::AtMostOnce,
             1u8 => QoS::AtLeastOnce,
             2u8 => QoS::ExactlyOnce,
@@ -477,9 +465,9 @@ fn parse_subscribe(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], Su
             }
         };
 
-        let no_local = options[0] & 0b0000_0100u8 == 0b0000_0100;
-        let retain_as_published = options[0] & 0b0000_1000u8 == 0b0000_1000;
-        let retain_handling = match (options[0] & 0b0011_0000u8) >> 4 {
+        let no_local = options & 0b0000_0100u8 == 0b0000_0100;
+        let retain_as_published = options & 0b0000_1000u8 == 0b0000_1000;
+        let retain_handling = match (options & 0b0011_0000u8) >> 4 {
             0u8 => RetainHandling::SendRetained,
             1u8 => RetainHandling::SendRetainedForNewSubscription,
             2u8 => RetainHandling::DoNotSendRetained,
@@ -623,10 +611,10 @@ fn parse_suback(packet_size: u32, rest: &[u8]) -> MqttParserResult<&[u8], SubAck
 }
 
 fn parse_connack(input: &[u8]) -> MqttParserResult<&[u8], ConnAck> {
-    let (input, connect_acknowledge_flags) = take(1usize)(input)?;
-    let session_present = connect_acknowledge_flags[0] & 0b0000_0001 == 1;
-    let (input, connect_reason_byte) = take(1usize)(input)?;
-    let connect_reason = match connect_reason_byte[0] {
+    let (input, connect_acknowledge_flags) = take_first(input)?;
+    let session_present = connect_acknowledge_flags & 0b0000_0001 == 1;
+    let (input, connect_reason_byte) = take_first(input)?;
+    let connect_reason = match connect_reason_byte {
         0 => ConnectReason::Success,
         128 => ConnectReason::UnspecifiedError,
         129 => ConnectReason::MalformedPacket,
@@ -701,8 +689,8 @@ fn parse_puback(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], PubAc
             },
         )),
         _ => {
-            let (input, reason) = take(1usize)(input)?;
-            let reason = match reason[0] {
+            let (input, reason) = take_first(input)?;
+            let reason = match reason {
                 0u8 => PubAckReason::Success,
                 16u8 => PubAckReason::NoMatchingSubscribers,
                 128u8 => PubAckReason::UnspecifiedError,
@@ -733,7 +721,7 @@ fn parse_puback(packet_size: u32, input: &[u8]) -> MqttParserResult<&[u8], PubAc
     }
 }
 
-pub fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
+pub(in crate) fn parse_mqtt(input: &[u8]) -> MqttParserResult<&[u8], MqttPacket> {
     let (rest, header) = parse_header(input)?;
 
     match header.packet_type {

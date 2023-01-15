@@ -328,7 +328,8 @@ pub struct Disconnect {
     pub server_reference: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum QoS {
     AtMostOnce = 0,
     AtLeastOnce = 1,
