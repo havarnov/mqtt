@@ -14,6 +14,7 @@ use nom::number::Endianness;
 use nom::{InputIter, InputLength, InputTake, IResult, Needed};
 use std::num::NonZeroUsize;
 use std::str;
+use crate::Payload;
 
 #[derive(Debug, PartialEq)]
 pub(in crate) enum MqttParserError<I> {
@@ -297,7 +298,11 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
     let (input, will) = if (flags & 0b00000100) != 0u8 {
         let (rest, will_properties) = parse_properties(input)?;
         let (rest, will_topic) = parse_string(rest)?;
-        let (rest, will_payload) = parse_binary_data(rest)?;
+
+        let (rest, will_payload) = match will_properties.payload_format_indicator {
+            Some(1) => map(parse_string, Payload::String)(rest)?,
+            _ => map(parse_binary_data, |value| Payload::Unspecified(value.to_vec()))(rest)?,
+        };
 
         (
             rest,
@@ -305,9 +310,8 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
                 retain: (flags & 0b00100000)!= 0u8,
                 qos: will_qos,
                 topic: will_topic,
-                payload: will_payload.to_vec(),
+                payload: will_payload,
                 delay_interval: will_properties.will_delay_interval,
-                payload_format_indicator: will_properties.payload_format_indicator,
                 message_expiry_interval: will_properties.message_expiry_interval,
                 content_type: will_properties.content_type,
                 response_topic: will_properties.response_topic,
@@ -326,7 +330,7 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
     };
 
     let (input, password) = if (flags & 0b01000000) != 0u8 {
-        map(parse_string, Some)(input)?
+        map(parse_binary_data, |v| Some(v.to_vec()))(input)?
     } else {
         (input, None)
     };
@@ -417,7 +421,13 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
     };
     let (input, properties) = parse_properties(input)?;
     let variable_header_length = (len - input.len()) as u32;
-    let (input, payload) = take(packet_size - variable_header_length)(input)?;
+
+
+    let (input, payload) = match properties.payload_format_indicator {
+        Some(1) => unimplemented!(),
+        _ => map(take(packet_size - variable_header_length), |value: &[u8]| Payload::Unspecified(value.to_vec()))(input)?,
+    };
+
     Ok((
         input,
         Publish {
@@ -427,7 +437,6 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
             topic_name,
             packet_identifier,
             // properties
-            payload_format_indicator: properties.payload_format_indicator,
             message_expiry_interval: properties.message_expiry_interval,
             topic_alias: properties.topic_alias,
             response_topic: properties.response_topic,
@@ -436,7 +445,7 @@ fn parse_publish(packet_size: u32, flags: u8, input: &[u8]) -> MqttParserResult<
             subscription_identifier: properties.subscription_identifier,
             content_type: properties.content_type,
             // payload
-            payload: payload.to_vec(),
+            payload,
         },
     ))
 }

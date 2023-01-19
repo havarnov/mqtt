@@ -114,30 +114,112 @@ pub struct UserProperty {
     pub value: String,
 }
 
+/// An Application Message which is published by the Server after the Network Connection is closed in cases where the Network Connection is not closed normally.
 #[derive(Debug, PartialEq)]
 pub struct Will {
+    /// [3.1.2.7 Will Retain](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901042)
+    ///
+    /// If retain is `false`, the Server MUST publish the Will Message as a non-retained message.
+    /// If retain is `true`, the Server MUST publish the Will Message as a retained message.
     pub retain: bool,
+
+    /// [3.1.2.6 Will QoS](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901041)
+    ///
+    /// Specifies the QoS level to be used when publishing the Will Message.
     pub qos: QoS,
+
+    /// [3.1.3.3 Will Topic](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901069)
+    ///
+    /// The topic that the Will Message will be sent to.
     pub topic: String,
-    pub payload: Vec<u8>,
-    // properties
+
+    /// [3.1.3.4 Will Payload](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901070)
+    ///
+    /// The Will Payload defines the Application Message Payload that is to be published to the Will Topic.
+    pub payload: Payload,
+
+    /// [3.1.3.2.2 Will Delay Interval](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901062)
+    ///
+    /// The Server delays publishing the Client’s Will Message until the Will Delay Interval has passed or the Session ends, whichever happens first.
+    /// If a new Network Connection to this Session is made before the Will Delay Interval has passed, the Server MUST NOT send the Will Message.
+    ///
+    /// If the Will Delay Interval is absent, the default value is 0 and there is no delay before the Will Message is published.
     pub delay_interval: Option<u32>,
-    pub payload_format_indicator: Option<u8>,
+
+    /// [3.1.3.2.4 Message Expiry Interval](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901064)
+    ///
+    /// If present, it's the lifetime of the Will Message in seconds and is sent as the Publication Expiry Interval when the Server publishes the Will Message.
     pub message_expiry_interval: Option<u32>,
+
+    /// [3.1.3.2.5 Content Type](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901065)
+    ///
+    /// Describing the content of the Will Message.
     pub content_type: Option<String>,
+
+
+    /// [3.1.3.2.6 Response Topic](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901066)
+    ///
+    /// The Topic Name for a response message (to this specific will message).
     pub response_topic: Option<String>,
+
+    /// [3.1.3.2.7 Correlation Data](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901067)
+    ///
+    /// The Correlation Data is used by the sender of the Request Message to identify which request the Response Message is for when it is received.
+    /// The value of the Correlation Data only has meaning to the sender of the Request Message and receiver of the Response Message.
     pub correlation_data: Option<Vec<u8>>,
+
+    /// [3.1.3.2.8 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901068)
     pub user_properties: Option<Vec<UserProperty>>,
+}
+
+/// The payload of a message (Publish or Will).
+///
+/// As defined [3.3.2.3.2 Payload Format Indicator](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901111) and [3.1.3.2.3 Payload Format Indicator](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901063):
+/// * 0 (0x00) Byte Indicates that the Payload is unspecified bytes, which is equivalent to not sending a Payload Format Indicator.
+/// * 1 (0x01) Byte Indicates that the Payload is UTF-8 Encoded Character Data. The UTF-8 data in the Payload MUST be well-formed UTF-8 as defined by the Unicode specification.
+#[derive(Debug, PartialEq, Clone)]
+pub enum Payload {
+    /// 0 (0x00) Byte Indicates that the Will Message is unspecified bytes, which is equivalent to not sending a Payload Format Indicator.
+    Unspecified(Vec<u8>),
+
+    /// 1 (0x01) Byte Indicates that the Will Message is UTF-8 Encoded Character Data. The UTF-8 data in the Payload MUST be well-formed UTF-8 as defined by the Unicode specification.
+    String(String)
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Connect {
+    /// [3.1.2.1 Protocol Name](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901036)
+    ///
+    /// The Protocol Name is “MQTT”, capitalized as shown. The string, its offset and length will not be changed by future versions of the MQTT specification.
     pub protocol_name: String,
+
+    /// [3.1.2.2 Protocol Version](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901037)
+    ///
+    /// The value of the Protocol Version field for version 5.0 of the protocol is 5 (0x05).
     pub protocol_version: u8,
+
+    /// [3.1.3.1 Client Identifier (ClientID)](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901059)
+    ///
+    /// The Client Identifier (ClientID) identifies the Client to the Server.
+    /// Each Client connecting to the Server has a unique ClientID.
+    /// The ClientID MUST be used by Clients and by Servers to identify state that they hold relating to this MQTT Session between the Client and the Server.
     pub client_identifier: String,
+
+    /// [3.1.3.5 User Name](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901071)
+    ///
+    /// If the username is set, it can be used by the Server for authentication and authorization.
     pub username: Option<String>,
-    pub password: Option<String>,
+
+    /// [3.1.3.6 Password](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901072)
+    ///
+    /// Although this field is called Password, it can be used to carry any credential information.
+    pub password: Option<Vec<u8>>,
+
+    /// [3.1.2.5 Will Flag](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901040)
+    ///
+    /// If the Will Flag is set to 1 this indicates that a Will Message MUST be stored on the Server and associated with the Session.
     pub will: Option<Will>,
+
     pub clean_start: bool,
     pub keep_alive: u16,
     pub session_expiry_interval: Option<u32>,
@@ -370,13 +452,6 @@ pub struct Publish {
     /// The Packet Identifier field is only present in PUBLISH packets where the QoS level is 1 or 2.
     pub packet_identifier: Option<u16>,
 
-    /// [3.3.2.3.2 Payload Format Indicator](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901111)
-    ///
-    /// (...) the value of the Payload Format Indicator, either of:
-    /// * 0 (0x00) Byte Indicates that the Will Message is unspecified bytes, which is equivalent to not sending a Payload Format Indicator.
-    /// * 1 (0x01) Byte Indicates that the Will Message is UTF-8 Encoded Character Data. The UTF-8 data in the Payload MUST be well-formed UTF-8 as defined by the Unicode specification [Unicode] and restated in RFC 3629 [RFC3629].
-    pub payload_format_indicator: Option<u8>,
-
     /// [3.3.2.3.3 Message Expiry Interval](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901112)
     ///
     /// (...) is the lifetime of the Application Message in seconds.
@@ -419,7 +494,7 @@ pub struct Publish {
     ///
     /// The Payload contains the Application Message that is being published.
     /// The content and format of the data is application specific.
-    pub payload: Vec<u8>,
+    pub payload: Payload,
 }
 
 /// [3.4.2.1 PUBACK Reason Code](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901124)

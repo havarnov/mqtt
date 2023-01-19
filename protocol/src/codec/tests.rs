@@ -1,6 +1,7 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
+use crate::Payload;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, PubAck,
     PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, TopicFilter,
@@ -71,7 +72,7 @@ packet_tests! {
             protocol_version: 5u8,
             client_identifier: "testing".to_string(),
             username: Some("USER".to_string()),
-            password: Some("PASS".to_string()),
+            password: Some("PASS".as_bytes().to_vec()),
             will: None,
             clean_start: true,
             keep_alive: 10u16,
@@ -144,14 +145,13 @@ packet_tests! {
             protocol_version: 5,
             client_identifier: "havar-testing".to_string(),
             username: Some("USERNAME".to_string()),
-            password: Some("PASSWORD".to_string()),
+            password: Some("PASSWORD".as_bytes().to_vec()),
             will: Some(Will {
                 retain: false,
                 qos: QoS::AtMostOnce,
                 topic: "foo".to_string(),
-                payload: vec![116, 97, 108, 116, 97, 108],
+                payload: Payload::String("taltal".to_string()),
                 delay_interval: Some(1),
-                payload_format_indicator: Some(1),
                 message_expiry_interval: Some(1),
                 content_type: Some("plain/text".to_string()),
                 response_topic: None,
@@ -303,7 +303,6 @@ packet_tests! {
             retain: true,
             topic_name: "foobar".to_string(),
             packet_identifier: None,
-            payload_format_indicator: None,
             message_expiry_interval: None,
             topic_alias: None,
             response_topic: None,
@@ -311,7 +310,7 @@ packet_tests! {
             user_properties: None,
             subscription_identifier: None,
             content_type: None,
-            payload: vec![1u8, 3u8, 5u8],
+            payload: Payload::Unspecified(vec![1u8, 3u8, 5u8]),
         }),
     ),
 
@@ -338,7 +337,6 @@ packet_tests! {
             retain: true,
             topic_name: "foobar".to_string(),
             packet_identifier: Some(42u16),
-            payload_format_indicator: None,
             message_expiry_interval: None,
             topic_alias: None,
             response_topic: None,
@@ -346,7 +344,7 @@ packet_tests! {
             user_properties: None,
             subscription_identifier: None,
             content_type: None,
-            payload: vec![1u8, 3u8, 5u8],
+            payload: Payload::Unspecified(vec![1u8, 3u8, 5u8]),
         }),
     ),
 

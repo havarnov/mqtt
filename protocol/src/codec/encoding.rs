@@ -1,3 +1,4 @@
+use crate::Payload;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, PubAck,
     PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, UnsubAck,
@@ -507,7 +508,7 @@ fn encode_publish(publish: &Publish) -> Vec<u8> {
     }
 
     let properties = Properties {
-        payload_format_indicator: publish.payload_format_indicator,
+        payload_format_indicator: if let Payload::String(_) = publish.payload { Some(1) } else { None },
         message_expiry_interval: publish.message_expiry_interval,
         topic_alias: publish.topic_alias,
         response_topic: publish.response_topic.to_owned(),
@@ -519,7 +520,13 @@ fn encode_publish(publish: &Publish) -> Vec<u8> {
     };
     variable_header_and_payload.extend(&encode_properties(&properties));
 
-    variable_header_and_payload.extend(&publish.payload);
+    match &publish.payload {
+        Payload::Unspecified(binary_data) =>
+            variable_header_and_payload.extend(binary_data),
+
+        Payload::String(string) =>
+            variable_header_and_payload.extend(encode_string(string)),
+    }
 
     let packet_length = encode_variable_u32(variable_header_and_payload.len() as u32);
     let mut result =
@@ -594,7 +601,7 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
     if let Some(will) = &connect.will {
         let will_properties = Properties {
             will_delay_interval: will.delay_interval,
-            payload_format_indicator: will.payload_format_indicator,
+            payload_format_indicator: if let Payload::String(_) = will.payload { Some(1) } else { None },
             message_expiry_interval: will.message_expiry_interval,
             content_type: will.content_type.to_owned(),
             response_topic: will.response_topic.to_owned(),
@@ -605,7 +612,13 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
         payload.extend(&encode_properties(&will_properties));
 
         payload.extend(&encode_string(&will.topic));
-        payload.extend(&encode_binary(&will.payload));
+        match &will.payload {
+            Payload::Unspecified(binary_data) =>
+                payload.extend(&encode_binary(&binary_data)),
+
+            Payload::String(string) =>
+                payload.extend(&encode_string(&string)),
+        }
     }
 
     if let Some(username) = &connect.username {
@@ -613,7 +626,7 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
     }
 
     if let Some(password) = &connect.password {
-        payload.extend(&encode_string(password));
+        payload.extend(&encode_binary(password));
     }
 
     let mut result = vec![0b0001_0000u8];
