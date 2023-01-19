@@ -7,13 +7,12 @@ use crate::types::{
 use nom::bits::bits;
 use nom::bits::streaming::take as bit_take;
 use nom::bytes::streaming::take;
-use nom::combinator::{map, map_parser};
-use nom::error::{Error, ParseError};
+use nom::combinator::map;
+use nom::error::Error;
 use nom::number::streaming::{u16, u32};
 use nom::number::Endianness;
-use nom::{InputIter, InputLength, InputTake, IResult, Needed, ToUsize};
+use nom::{InputIter, InputLength, InputTake, IResult, Needed};
 use std::num::NonZeroUsize;
-use std::ops::{Deref, Index};
 use std::str;
 
 #[derive(Debug, PartialEq)]
@@ -78,9 +77,8 @@ pub(in crate) fn parse_string(input: &[u8]) -> MqttParserResult<&[u8], String> {
 }
 
 fn parse_string_pair(input: &[u8]) -> MqttParserResult<&[u8], (String, String)> {
-    let (input, key) = parse_string(input)?;
-    let (input, value) = parse_string(input)?;
-    Ok((input, (key, value)))
+    let (rest, (key, value)) = nom::sequence::pair(parse_string, parse_string)(input)?;
+    Ok((rest, (key, value)))
 }
 
 pub(in crate) fn parse_header(input: &[u8]) -> MqttParserResult<&[u8], MqttHeader> {
