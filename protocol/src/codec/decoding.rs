@@ -14,7 +14,7 @@ use nom::number::Endianness;
 use nom::{InputIter, InputLength, InputTake, IResult, Needed};
 use std::num::NonZeroUsize;
 use std::str;
-use crate::Payload;
+use crate::{Authentication, Payload};
 
 #[derive(Debug, PartialEq)]
 pub(in crate) enum MqttParserError<I> {
@@ -353,8 +353,10 @@ fn parse_connect(input: &[u8]) -> MqttParserResult<&[u8], Connect> {
             request_response_information: properties.request_response_information,
             request_problem_information: properties.request_problem_information,
             user_properties: properties.user_properties,
-            authentication_method: properties.authentication_method,
-            authentication_data: properties.authentication_data,
+            authentication: match properties.authentication_method {
+                Some(authentication_method) => Some(Authentication { authentication_method, authentication_data: properties.authentication_data }),
+                _ => None,
+            },
         },
     ))
 }

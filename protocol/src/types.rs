@@ -220,16 +220,72 @@ pub struct Connect {
     /// If the Will Flag is set to 1 this indicates that a Will Message MUST be stored on the Server and associated with the Session.
     pub will: Option<Will>,
 
+    /// [3.1.2.4 Clean Start](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901039)
+    ///
+    /// If `true` the Client and Server MUST discard any existing Session and start a new Session.
+    /// If `false` and there is a Session associated with the Client Identifier, the Server MUST resume communications with the Client based on state from the existing Session.
+    /// If `false` and there is no Session associated with the Client Identifier, the Server MUST create a new Session.
     pub clean_start: bool,
+
+    /// [3.1.2.10 Keep Alive](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901045)
+    ///
+    /// It is the maximum time interval (in seconds) that is permitted to elapse between the point at which the Client finishes transmitting one MQTT Control Packet and the point it starts sending the next.
     pub keep_alive: u16,
+
+    /// [3.1.2.11.2 Session Expiry Interval](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901048)
+    ///
+    /// The Client and Server MUST store the Session State after the Network Connection is closed if the Session Expiry Interval is greater than 0
+    /// If the Session Expiry Interval is 0xFFFFFFFF (UINT_MAX), the Session does not expire.
     pub session_expiry_interval: Option<u32>,
+
+    /// [3.1.2.11.3 Receive Maximum](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901049)
+    ///
+    /// The Client uses this value to limit the number of QoS 1 and QoS 2 publications that it is willing to process concurrently.
     pub receive_maximum: Option<u16>,
+
+    /// [3.1.2.11.4 Maximum Packet Size](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901050)
+    ///
+    /// If the Maximum Packet Size is not present, no limit on the packet size is imposed beyond the limitations in the protocol as a result of the remaining length encoding and the protocol header sizes.
     pub maximum_packet_size: Option<u32>,
+
+    /// [3.1.2.11.5 Topic Alias Maximum](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901051)
+    ///
+    /// This value indicates the highest value that the Client will accept as a Topic Alias sent by the Server.
+    /// The Client uses this value to limit the number of Topic Aliases that it is willing to hold on this Connection.
     pub topic_alias_maximum: Option<u16>,
+
+    /// [3.1.2.11.6 Request Response Information](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901052)
+    ///
+    /// The Client uses this value to request the Server to return Response Information in the CONNACK.
     pub request_response_information: Option<bool>,
+
+    /// [3.1.2.11.7 Request Problem Information](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901053)
+    ///
+    /// The Client uses this value to indicate whether the Reason String or User Properties are sent in the case of failures.
     pub request_problem_information: Option<bool>,
+
+    /// [3.1.2.11.8 User Property](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901054)
+    ///
+    /// User Properties on the CONNECT packet can be used to send connection related properties from the Client to the Server. The meaning of these properties is not defined by this specification.
     pub user_properties: Option<Vec<UserProperty>>,
-    pub authentication_method: Option<String>,
+
+    /// [4.12 Enhanced authentication](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Enhanced_authentication)
+    ///
+    /// The MQTT CONNECT packet supports basic authentication of a Network Connection using the User Name and Password fields.
+    /// While these fields are named for a simple password authentication, they can be used to carry other forms of authentication such as passing a token as the Password.
+    pub authentication: Option<Authentication>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Authentication {
+    /// [3.1.2.11.9 Authentication Method](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901055)
+    ///
+    /// The name of the authentication method used for extended authentication
+    pub authentication_method: String,
+
+    /// [3.1.2.11.10 Authentication Data](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901056)
+    ///
+    /// The contents of this data are defined by the authentication method.
     pub authentication_data: Option<Vec<u8>>,
 }
 

@@ -83,8 +83,7 @@ packet_tests! {
             request_response_information: None,
             request_problem_information: None,
             user_properties: None,
-            authentication_data: None,
-            authentication_method: None
+            authentication: None,
         })
     ),
 
@@ -166,8 +165,7 @@ packet_tests! {
             request_response_information: None,
             request_problem_information: None,
             user_properties: None,
-            authentication_method: None,
-            authentication_data: None})
+            authentication: None})
     ),
 
     simple_connack: (

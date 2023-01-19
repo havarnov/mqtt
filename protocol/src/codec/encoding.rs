@@ -591,6 +591,8 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
         request_response_information: connect.request_response_information,
         request_problem_information: connect.request_problem_information,
         user_properties: connect.user_properties.to_owned(),
+        authentication_method: connect.authentication.as_ref().map(|a| a.authentication_method.to_string()),
+        authentication_data: connect.authentication.as_ref().map(|a| a.authentication_data.to_owned()).unwrap_or(None),
         ..Default::default()
     };
     variable_header.extend(&encode_properties(&properties));
