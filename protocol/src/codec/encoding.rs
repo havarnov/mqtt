@@ -357,7 +357,7 @@ fn encode_connack(connack: &ConnAck) -> Vec<u8> {
     let properties = Properties {
         session_expiry_interval: connack.session_expiry_interval,
         receive_maximum: connack.receive_maximum,
-        maximum_qos: connack.maximum_qos.clone(),
+        maximum_qos: connack.maximum_qos,
         retain_available: connack.retain_available,
         maximum_packet_size: connack.maximum_packet_size,
         assigned_client_identifier: connack.assigned_client_identifier.to_owned(),
@@ -628,9 +628,9 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
 
         payload.extend(&encode_string(&will.topic));
         match &will.payload {
-            Payload::Unspecified(binary_data) => payload.extend(&encode_binary(&binary_data)),
+            Payload::Unspecified(binary_data) => payload.extend(&encode_binary(binary_data)),
 
-            Payload::String(string) => payload.extend(&encode_string(&string)),
+            Payload::String(string) => payload.extend(&encode_string(string)),
         }
     }
 
@@ -654,10 +654,10 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
 pub fn encode(packet: &MqttPacket) -> Vec<u8> {
     match packet {
         MqttPacket::PingResp => {
-            return vec![0b1101_0000u8, 0u8];
+            vec![0b1101_0000u8, 0u8]
         }
         MqttPacket::PingReq => {
-            return vec![0b1100_0000u8, 0u8];
+            vec![0b1100_0000u8, 0u8]
         }
         MqttPacket::ConnAck(c) => encode_connack(c),
         MqttPacket::Publish(publish) => encode_publish(publish),

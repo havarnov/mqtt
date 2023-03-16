@@ -217,15 +217,15 @@ where
                             &broadcast_tx)
                         .await {
                             Ok(()) => (),
-                            Err(HandlePublishError::TopicAliasError(error)) => {
+                            Err(HandlePublishError::TopicAlias(error)) => {
                                 trace!("{}", error);
                                 framed = None;
                             }
-                            Err(HandlePublishError::FramedError(error)) => {
+                            Err(HandlePublishError::Framed(error)) => {
                                 println!("{:?}", error);
                                 framed = None;
                             }
-                            Err(HandlePublishError::BroadcastSendError(error)) => return Err(Box::new(error))
+                            Err(HandlePublishError::BroadcastSend(error)) => return Err(Box::new(error))
                         }
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
@@ -418,9 +418,9 @@ where
                                 }
 
                                 let qos = if subscription.maximum_qos > publish.qos {
-                                    publish.qos.clone()
+                                    publish.qos
                                 } else {
-                                    subscription.maximum_qos.clone()
+                                    subscription.maximum_qos
                                 };
 
                                 let retain = subscription.retain_as_published && publish.retain;
@@ -463,7 +463,7 @@ where
 
                         for publish in publish_messages_to_send {
 
-                            let packet_identifier = publish.packet_identifier.clone();
+                            let packet_identifier = publish.packet_identifier;
 
                             if framed.is_none() {
                                 if publish.qos == QoS::AtLeastOnce {
@@ -703,7 +703,7 @@ async fn handle_subscribe<Session: session::Session, T: MqttSinkStream>(
                             ClientSubscription {
                                 topic_filter,
                                 subscription_identifier: subscribe.subscription_identifier,
-                                maximum_qos: topic_filter_from_subscription.maximum_qos.clone(),
+                                maximum_qos: topic_filter_from_subscription.maximum_qos,
                                 retain_as_published: topic_filter_from_subscription
                                     .retain_as_published,
                             },
@@ -730,20 +730,20 @@ async fn handle_subscribe<Session: session::Session, T: MqttSinkStream>(
 
 #[derive(Debug)]
 enum HandlePublishError {
-    TopicAliasError(String),
-    BroadcastSendError(SendError<ClientBroadcastMessage>),
-    FramedError(MqttPacketEncoderError),
+    TopicAlias(String),
+    BroadcastSend(SendError<ClientBroadcastMessage>),
+    Framed(MqttPacketEncoderError),
 }
 
 impl From<SendError<ClientBroadcastMessage>> for HandlePublishError {
     fn from(error: SendError<ClientBroadcastMessage>) -> Self {
-        HandlePublishError::BroadcastSendError(error)
+        HandlePublishError::BroadcastSend(error)
     }
 }
 
 impl From<MqttPacketEncoderError> for HandlePublishError {
     fn from(mqtt_packet_encoder_error: MqttPacketEncoderError) -> Self {
-        HandlePublishError::FramedError(mqtt_packet_encoder_error)
+        HandlePublishError::Framed(mqtt_packet_encoder_error)
     }
 }
 
@@ -774,7 +774,7 @@ async fn handle_publish<T: MqttSinkStream>(
                     reason_string: None,
                 }))
                 .await?;
-            return Err(HandlePublishError::TopicAliasError(
+            return Err(HandlePublishError::TopicAlias(
                 "'topic_alias' is or > MAX_TOPIC_ALIAS.".to_string(),
             ));
         }
@@ -791,7 +791,7 @@ async fn handle_publish<T: MqttSinkStream>(
                         reason_string: None,
                     }))
                     .await?;
-                return Err(HandlePublishError::TopicAliasError(format!("Couldn't find the topic name from provided topic alias = {} and no topic name was provided.", topic_alias)));
+                return Err(HandlePublishError::TopicAlias(format!("Couldn't find the topic name from provided topic alias = {} and no topic name was provided.", topic_alias)));
             }
         }
         Some(topic_alias) => {
@@ -808,7 +808,7 @@ async fn handle_publish<T: MqttSinkStream>(
                     reason_string: None,
                 }))
                 .await?;
-            return Err(HandlePublishError::TopicAliasError(
+            return Err(HandlePublishError::TopicAlias(
                 "Neither topic alias nor topic name was provided.".to_string(),
             ));
         }
