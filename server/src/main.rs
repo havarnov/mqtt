@@ -339,7 +339,7 @@ where
                                 wildcard_subscription_available: None,
                                 subscription_identifiers_available: None,
                                 shared_subscription_available: None,
-                                server_keep_alive: None,
+                                server_keep_alive,
                                 response_information: None,
                                 server_reference: None,
                                 authentication_method: None,
