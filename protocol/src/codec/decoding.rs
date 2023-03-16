@@ -184,7 +184,10 @@ fn parse_properties(input: &[u8]) -> MqttParserResult<&[u8], Properties> {
                 &mut props.retain_available,
                 map(take_first, |b| b != 0)(rest_next)?,
             ),
-            19u32 => unimplemented!("Server Keep Alive"),
+            19u32 => map_to_property(
+                &mut props.server_keep_alive,
+                u16(Endianness::Big)(rest_next)?,
+            ),
             21u32 => map_to_property(&mut props.authentication_method, parse_string(rest_next)?),
             22u32 => map_to_property(
                 &mut props.authentication_data,
