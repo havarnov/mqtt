@@ -156,7 +156,6 @@ pub struct Will {
     /// Describing the content of the Will Message.
     pub content_type: Option<String>,
 
-
     /// [3.1.3.2.6 Response Topic](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901066)
     ///
     /// The Topic Name for a response message (to this specific will message).
@@ -183,7 +182,7 @@ pub enum Payload {
     Unspecified(Vec<u8>),
 
     /// 1 (0x01) Byte Indicates that the Will Message is UTF-8 Encoded Character Data. The UTF-8 data in the Payload MUST be well-formed UTF-8 as defined by the Unicode specification.
-    String(String)
+    String(String),
 }
 
 #[derive(Debug, PartialEq)]

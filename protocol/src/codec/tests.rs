@@ -1,12 +1,12 @@
 use crate::codec::decoding::MqttParserError::MalformedPacket;
 use crate::codec::decoding::{parse_mqtt, MqttParserError};
 use crate::codec::encoding::encode;
-use crate::Payload;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, PubAck,
     PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, TopicFilter,
     UnsubAck, Unsubscribe, UnsubscribeReason, Will,
 };
+use crate::Payload;
 
 macro_rules! packet_tests {
     ($($name:ident: $value:expr,)*) => {

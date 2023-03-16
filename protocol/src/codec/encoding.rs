@@ -1,9 +1,9 @@
-use crate::Payload;
 use crate::types::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Properties, PubAck,
     PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, UnsubAck,
     Unsubscribe, UnsubscribeReason,
 };
+use crate::Payload;
 
 fn encode_connect_reason(reason: &ConnectReason) -> u8 {
     match reason {
@@ -508,7 +508,11 @@ fn encode_publish(publish: &Publish) -> Vec<u8> {
     }
 
     let properties = Properties {
-        payload_format_indicator: if let Payload::String(_) = publish.payload { Some(1) } else { None },
+        payload_format_indicator: if let Payload::String(_) = publish.payload {
+            Some(1)
+        } else {
+            None
+        },
         message_expiry_interval: publish.message_expiry_interval,
         topic_alias: publish.topic_alias,
         response_topic: publish.response_topic.to_owned(),
@@ -521,11 +525,9 @@ fn encode_publish(publish: &Publish) -> Vec<u8> {
     variable_header_and_payload.extend(&encode_properties(&properties));
 
     match &publish.payload {
-        Payload::Unspecified(binary_data) =>
-            variable_header_and_payload.extend(binary_data),
+        Payload::Unspecified(binary_data) => variable_header_and_payload.extend(binary_data),
 
-        Payload::String(string) =>
-            variable_header_and_payload.extend(encode_string(string)),
+        Payload::String(string) => variable_header_and_payload.extend(encode_string(string)),
     }
 
     let packet_length = encode_variable_u32(variable_header_and_payload.len() as u32);
@@ -591,8 +593,15 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
         request_response_information: connect.request_response_information,
         request_problem_information: connect.request_problem_information,
         user_properties: connect.user_properties.to_owned(),
-        authentication_method: connect.authentication.as_ref().map(|a| a.authentication_method.to_string()),
-        authentication_data: connect.authentication.as_ref().map(|a| a.authentication_data.to_owned()).unwrap_or(None),
+        authentication_method: connect
+            .authentication
+            .as_ref()
+            .map(|a| a.authentication_method.to_string()),
+        authentication_data: connect
+            .authentication
+            .as_ref()
+            .map(|a| a.authentication_data.to_owned())
+            .unwrap_or(None),
         ..Default::default()
     };
     variable_header.extend(&encode_properties(&properties));
@@ -603,7 +612,11 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
     if let Some(will) = &connect.will {
         let will_properties = Properties {
             will_delay_interval: will.delay_interval,
-            payload_format_indicator: if let Payload::String(_) = will.payload { Some(1) } else { None },
+            payload_format_indicator: if let Payload::String(_) = will.payload {
+                Some(1)
+            } else {
+                None
+            },
             message_expiry_interval: will.message_expiry_interval,
             content_type: will.content_type.to_owned(),
             response_topic: will.response_topic.to_owned(),
@@ -615,11 +628,9 @@ fn encode_connect(connect: &Connect) -> Vec<u8> {
 
         payload.extend(&encode_string(&will.topic));
         match &will.payload {
-            Payload::Unspecified(binary_data) =>
-                payload.extend(&encode_binary(&binary_data)),
+            Payload::Unspecified(binary_data) => payload.extend(&encode_binary(&binary_data)),
 
-            Payload::String(string) =>
-                payload.extend(&encode_string(&string)),
+            Payload::String(string) => payload.extend(&encode_string(&string)),
         }
     }
 

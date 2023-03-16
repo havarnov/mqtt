@@ -15,17 +15,20 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          components: rustfmt, clippy
 
       - name: cargo test
         uses: actions-rs/cargo@v1
         with:
           command: test
 
-      - name: add clippy
-        run: rustup component add clippy
-
-      - name: run clippy
-        uses: actions-rs/clippy-check@v1
+      - name: cargo test
+        uses: actions-rs/cargo@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
+          command: fmt --check
+
+      - name: cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy --check
+
