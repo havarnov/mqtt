@@ -1,10 +1,19 @@
-use crate::{handle_connect, ClientIdentifier, HandleConnectError};
-use futures::SinkExt;
+use crate::session::MemorySessionProvider;
+use crate::{handle_connect, ClientIdentifier, HandleConnectError, IncomingConnectionHandler};
+use futures::{SinkExt, StreamExt};
 use mqtt_protocol::codec::MqttPacketDecoder;
 use mqtt_protocol::{Connect, MqttPacket};
 use std::error::Error;
 use tokio::io::DuplexStream;
+use tokio::sync::broadcast;
 use tokio_util::codec::Framed;
+
+macro_rules! assert_fail {
+    ($msg:expr) => {
+        assert!(false, $msg);
+        unreachable!("due to assert(false).")
+    };
+}
 
 #[derive(Default)]
 struct ConnectBuilder {
@@ -111,6 +120,79 @@ async fn handle_connect_normal_client_identifier() -> Result<(), Box<dyn Error>>
 }
 
 #[tokio::test]
+async fn connect_and_connack() -> Result<(), Box<dyn Error>> {
+    let handler = IncomingConnectionHandler {
+        clients: dashmap::DashMap::new(),
+        session_provider: MemorySessionProvider::new(),
+    };
+
+    let (mut client_side, server_side) = create_client();
+
+    client_side
+        .send(MqttPacket::Connect(
+            ConnectBuilder::new()
+                .client_identifier("test")
+                .clean_start(true)
+                .build()?,
+        ))
+        .await?;
+
+    let (broadcast_tx, _) = broadcast::channel(1000);
+    if let Err(e) = handler.incoming_connection(server_side, broadcast_tx).await {
+        println!("an error occurred; error = {:?}", e);
+    }
+
+    let Some(Ok(MqttPacket::ConnAck(_))) = client_side.next().await else {
+        assert_fail!("First message from server must be ConnAck.");
+    };
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn multiple_connect_should_close_connection() -> Result<(), Box<dyn Error>> {
+    let handler = IncomingConnectionHandler {
+        clients: dashmap::DashMap::new(),
+        session_provider: MemorySessionProvider::new(),
+    };
+
+    let (mut client_side, server_side) = create_client();
+
+    client_side
+        .send(MqttPacket::Connect(
+            ConnectBuilder::new()
+                .client_identifier("test")
+                .clean_start(true)
+                .build()?,
+        ))
+        .await?;
+
+    let (broadcast_tx, _) = broadcast::channel(1000);
+    if let Err(e) = handler.incoming_connection(server_side, broadcast_tx).await {
+        println!("an error occurred; error = {:?}", e);
+    }
+
+    let Some(Ok(MqttPacket::ConnAck(_))) = client_side.next().await else {
+        assert_fail!("First message from server must be ConnAck.");
+    };
+
+    client_side
+        .send(MqttPacket::Connect(
+            ConnectBuilder::new()
+                .client_identifier("test")
+                .clean_start(true)
+                .build()?,
+        ))
+        .await?;
+
+    let None = client_side.next().await else {
+        assert_fail!("Server MUST close connection if client sends multiple Connect packets.");
+    };
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn handle_connect_first_packet_not_connect() -> Result<(), Box<dyn Error>> {
     let (mut client_side, mut server_side) = create_client();
 
@@ -119,10 +201,7 @@ async fn handle_connect_first_packet_not_connect() -> Result<(), Box<dyn Error>>
     if let Err(HandleConnectError::ConnectNotFirstPacket) = handle_connect(&mut server_side).await {
         ()
     } else {
-        assert!(
-            false,
-            "Should return error since first packet was not Connect."
-        );
+        assert_fail!("Should return error since first packet was not Connect.");
     };
 
     Ok(())
