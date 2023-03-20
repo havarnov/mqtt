@@ -1,3 +1,4 @@
+mod broker_store;
 mod session;
 mod topic_filter;
 
@@ -8,6 +9,7 @@ use dashmap::mapref::entry::Entry;
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -18,13 +20,16 @@ use tokio::time::{sleep, Instant};
 use tokio_util::codec::Framed;
 use tracing::trace;
 
-use crate::session::{ClientSubscription, MemorySessionProvider, SessionError, SessionProvider};
+use crate::broker_store::{ClusterStore, ClusterStoreError, MemoryClusterStore};
+use crate::session::{
+    AddSubscriptionResult, ClientSubscription, MemorySessionProvider, SessionError, SessionProvider,
+};
 use crate::topic_filter::TopicFilter;
 use mqtt_protocol::codec::{MqttPacketDecoder, MqttPacketDecoderError, MqttPacketEncoderError};
 use mqtt_protocol::{
     ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, PubAck,
-    PubAckReason, Publish, QoS, SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason,
-    Will,
+    PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, UnsubAck,
+    UnsubscribeReason, Will,
 };
 
 // TODO: consts that should be configurable
@@ -35,18 +40,18 @@ const MAX_TOPIC_ALIAS: u16 = 10;
 trait MqttSinkStream:
     SinkExt<MqttPacket, Error = MqttPacketEncoderError>
     + StreamExt<Item = Result<MqttPacket, MqttPacketDecoderError>>
-    + std::marker::Unpin
-    + std::fmt::Debug
-    + std::marker::Send
+    + Unpin
+    + Debug
+    + Send
 {
 }
 
 impl<T> MqttSinkStream for T where
     T: SinkExt<MqttPacket, Error = MqttPacketEncoderError>
         + StreamExt<Item = Result<MqttPacket, MqttPacketDecoderError>>
-        + std::marker::Unpin
-        + std::fmt::Debug
-        + std::marker::Send
+        + Unpin
+        + Debug
+        + Send
 {
 }
 
@@ -55,15 +60,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     console_subscriber::init();
 
     let session_provider = MemorySessionProvider::new();
-    listener(session_provider).await
+    let cluster_store = MemoryClusterStore::new();
+    listener(session_provider, cluster_store).await
 }
 
-async fn listener<P: 'static + SessionProvider>(session_provider: P) -> Result<(), Box<dyn Error>> {
+async fn listener<P: 'static + SessionProvider, Store: 'static + ClusterStore>(
+    session_provider: P,
+    cluster_store: Store,
+) -> Result<(), Box<dyn Error>> {
     let addr = "0.0.0.0:6142";
     let listener = TcpListener::bind(&addr).await?;
     let handler = Arc::new(IncomingConnectionHandler {
         clients: dashmap::DashMap::new(),
         session_provider,
+        cluster_store,
     });
     let (broadcast_tx, _) = broadcast::channel(1000);
     loop {
@@ -83,11 +93,11 @@ async fn listener<P: 'static + SessionProvider>(session_provider: P) -> Result<(
     }
 }
 
-// async fn process<Session: session::Session, T: SinkExt<MqttPacket, Error = MqttPacketEncoderError> + StreamExt<Item = Result<MqttPacket, MqttPacketDecoderError>> + std::marker::Unpin>(
-async fn process<Session: session::Session, T: MqttSinkStream>(
+async fn process<Session: session::Session, Store: ClusterStore, T: MqttSinkStream>(
     mut connect_rx: UnboundedReceiver<ConnectMessage<T>>,
     broadcast_tx: broadcast::Sender<ClientBroadcastMessage>,
     mut session: Session,
+    mut cluster_store: Store,
 ) -> Result<(), Box<dyn Error>>
 where
     <T as futures::Sink<MqttPacket>>::Error: std::error::Error,
@@ -214,7 +224,8 @@ where
                             framed.as_mut().expect("must be some at this point"),
                             &mut topic_alias_map,
                             publish,
-                            &broadcast_tx)
+                            &broadcast_tx,
+                            &mut cluster_store)
                         .await {
                             Ok(()) => (),
                             Err(HandlePublishError::TopicAlias(error)) => {
@@ -225,7 +236,8 @@ where
                                 println!("{:?}", error);
                                 framed = None;
                             }
-                            Err(HandlePublishError::BroadcastSend(error)) => return Err(Box::new(error))
+                            Err(HandlePublishError::BroadcastSend(error)) => return Err(Box::new(error)),
+                            Err(HandlePublishError::ClusterStore(error)) => return Err(Box::new(error)),
                         }
                     }
                     Some(Ok(MqttPacket::Subscribe(subscribe))) => {
@@ -233,14 +245,16 @@ where
                         match handle_subscribe(
                             framed.as_mut().expect("must be some at this point"),
                             &mut session,
+                            &mut cluster_store,
                             subscribe)
                         .await {
-                            Ok(_) => (),
+                            Ok(_) => {},
                             Err(HandleSubscribeError::FramedError(error)) => {
                                 println!("{:?}", error);
                                 framed = None;
                             }
-                            Err(HandleSubscribeError::SessionError(_error)) => todo!("What to do with session errors??")
+                            Err(HandleSubscribeError::SessionError(_error)) => todo!("What to do with session errors??"),
+                            Err(HandleSubscribeError::ClusterStore(_error)) => todo!("What to do with cluster store errors??"),
                         }
                     }
                     Some(Ok(MqttPacket::Unsubscribe(unsubscribe))) => {
@@ -423,6 +437,16 @@ where
                                     subscription.maximum_qos
                                 };
 
+                                // 3.3.1.3 RETAIN
+                                // The setting of the RETAIN flag in an Application Message forwarded by the Server
+                                // from an established connection is controlled by the Retain As Published subscription option.
+                                //
+                                // - If the value of Retain As Published subscription option is set to 0,
+                                //   the Server MUST set the RETAIN flag to 0 when forwarding an Application Message
+                                //   regardless of how the RETAIN flag was set in the received PUBLISH packet [MQTT-3.3.1-12].
+                                //
+                                // - If the value of Retain As Published subscription option is set to 1,
+                                //   the Server MUST set the RETAIN flag equal to the RETAIN flag in the received PUBLISH packet [MQTT-3.3.1-13].
                                 let retain = subscription.retain_as_published && publish.retain;
 
                                 // 3.3.2.2 Packet Identifier
@@ -516,12 +540,15 @@ struct ConnectMessage<T: MqttSinkStream> {
     framed: T,
 }
 
-struct IncomingConnectionHandler<P: SessionProvider, T: MqttSinkStream> {
+struct IncomingConnectionHandler<P: SessionProvider, T: MqttSinkStream, Store: ClusterStore> {
     clients: dashmap::DashMap<String, UnboundedSender<ConnectMessage<T>>>,
     session_provider: P,
+    cluster_store: Store,
 }
 
-impl<P: 'static + SessionProvider, T: 'static + MqttSinkStream> IncomingConnectionHandler<P, T> {
+impl<P: 'static + SessionProvider, T: 'static + MqttSinkStream, Store: 'static + ClusterStore>
+    IncomingConnectionHandler<P, T, Store>
+{
     async fn incoming_connection(
         &self,
         mut framed: T,
@@ -541,9 +568,9 @@ impl<P: 'static + SessionProvider, T: 'static + MqttSinkStream> IncomingConnecti
                         .session_provider
                         .get(&client_identifier.get_client_identifier())
                         .await?;
-
+                    let cluster_store = self.cluster_store.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = process(rx, broadcast, session).await {
+                        if let Err(e) = process(rx, broadcast, session, cluster_store).await {
                             println!("an error occurred; error = {:?}", e);
                         }
                     });
@@ -571,8 +598,10 @@ impl<P: 'static + SessionProvider, T: 'static + MqttSinkStream> IncomingConnecti
                     .get(&client_identifier.get_client_identifier())
                     .await?;
 
+                let cluster_store = self.cluster_store.clone();
+
                 tokio::spawn(async move {
-                    if let Err(e) = process(rx, broadcast, session).await {
+                    if let Err(e) = process(rx, broadcast, session, cluster_store).await {
                         println!("an error occurred; error = {:?}", e);
                     }
                 });
@@ -657,6 +686,7 @@ async fn handle_connect<T: MqttSinkStream>(
 enum HandleSubscribeError {
     SessionError(SessionError),
     FramedError(MqttPacketEncoderError),
+    ClusterStore(ClusterStoreError),
 }
 
 impl From<SessionError> for HandleSubscribeError {
@@ -671,6 +701,12 @@ impl From<MqttPacketEncoderError> for HandleSubscribeError {
     }
 }
 
+impl From<ClusterStoreError> for HandleSubscribeError {
+    fn from(error: ClusterStoreError) -> Self {
+        HandleSubscribeError::ClusterStore(error)
+    }
+}
+
 impl std::fmt::Display for HandleSubscribeError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self)
@@ -679,42 +715,63 @@ impl std::fmt::Display for HandleSubscribeError {
 
 impl std::error::Error for HandleSubscribeError {}
 
-// async fn handle_subscribe<Session: session::Session, T: SinkExt<MqttPacket> + std::marker::Unpin>(
-async fn handle_subscribe<Session: session::Session, T: MqttSinkStream>(
-    // framed: &mut Framed<TcpStream, MqttPacketDecoder>,
+async fn handle_subscribe<Session: session::Session, T: MqttSinkStream, Store: ClusterStore>(
     framed: &mut T,
     session: &mut Session,
+    cluster_store: &mut Store,
     subscribe: Subscribe,
 ) -> Result<(), HandleSubscribeError> {
     println!("client subscribed to: {:?}", subscribe.topic_filters);
 
-    let mut reasons = Vec::new();
+    let mut reasons = Vec::with_capacity(subscribe.topic_filters.len());
     for topic_filter_from_subscription in subscribe.topic_filters.iter() {
         if topic_filter_from_subscription.filter.starts_with("$shared") {
             todo!("handle shared subscriptions.");
         }
 
-        reasons.push(
-            match TopicFilter::new(&topic_filter_from_subscription.filter) {
-                Ok(topic_filter) => {
-                    session
-                        .add_subscription(
-                            topic_filter_from_subscription.filter.clone(),
-                            ClientSubscription {
-                                topic_filter,
-                                subscription_identifier: subscribe.subscription_identifier,
-                                maximum_qos: topic_filter_from_subscription.maximum_qos,
-                                retain_as_published: topic_filter_from_subscription
-                                    .retain_as_published,
-                            },
-                        )
-                        .await?;
+        let Ok(topic_filter) = TopicFilter::new(&topic_filter_from_subscription.filter) else {
+            reasons.push(SubscribeReason::UnspecifiedError);
+            continue;
+        };
 
-                    SubscribeReason::GrantedQoS0
+        /*
+        If a Server receives a SUBSCRIBE packet containing a Topic Filter that is identical to a Non‑shared Subscription’s Topic Filter for the current Session,
+        then it MUST replace that existing Subscription with a new Subscription [MQTT-3.8.4-3]. The Topic Filter in the new Subscription will be identical to that
+        in the previous Subscription, although its Subscription Options could be different. If the Retain Handling option is 0, any existing retained messages
+        matching the Topic Filter MUST be re-sent, but Applicaton Messages MUST NOT be lost due to replacing the Subscription [MQTT-3.8.4-4].
+        */
+        let add_subscription_result = session
+            .add_subscription(
+                topic_filter_from_subscription.filter.clone(),
+                ClientSubscription {
+                    topic_filter: topic_filter.clone(),
+                    subscription_identifier: subscribe.subscription_identifier,
+                    maximum_qos: topic_filter_from_subscription.maximum_qos,
+                    retain_as_published: topic_filter_from_subscription.retain_as_published,
+                },
+            )
+            .await?;
+
+        // TODO: move this after SubAck.
+        // Not necessary according to standard, but make sens impl wise.
+        match (
+            add_subscription_result,
+            &topic_filter_from_subscription.retain_handling,
+        ) {
+            (_, &RetainHandling::SendRetained)
+            | (AddSubscriptionResult::New, &RetainHandling::SendRetainedForNewSubscription) => {
+                for retained in cluster_store.get_retained(&topic_filter).await? {
+                    let retained = Publish {
+                        retain: true,
+                        ..retained
+                    };
+                    framed.send(MqttPacket::Publish(retained)).await?;
                 }
-                Err(_) => SubscribeReason::UnspecifiedError,
-            },
-        );
+            }
+            _ => {}
+        };
+
+        reasons.push(SubscribeReason::GrantedQoS0);
     }
 
     framed
@@ -733,6 +790,7 @@ enum HandlePublishError {
     TopicAlias(String),
     BroadcastSend(SendError<ClientBroadcastMessage>),
     Framed(MqttPacketEncoderError),
+    ClusterStore(ClusterStoreError),
 }
 
 impl From<SendError<ClientBroadcastMessage>> for HandlePublishError {
@@ -747,6 +805,12 @@ impl From<MqttPacketEncoderError> for HandlePublishError {
     }
 }
 
+impl From<ClusterStoreError> for HandlePublishError {
+    fn from(cluster_store_error: ClusterStoreError) -> Self {
+        HandlePublishError::ClusterStore(cluster_store_error)
+    }
+}
+
 impl std::fmt::Display for HandlePublishError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self)
@@ -756,11 +820,12 @@ impl std::fmt::Display for HandlePublishError {
 impl std::error::Error for HandlePublishError {}
 
 /// Handles incoming PUBLISH packets sent from a client.
-async fn handle_publish<T: MqttSinkStream>(
+async fn handle_publish<T: MqttSinkStream, Store: ClusterStore>(
     framed: &mut T,
     topic_alias_map: &mut HashMap<u16, String>,
     publish: Publish,
     broadcast_tx: &broadcast::Sender<ClientBroadcastMessage>,
+    cluster_store: &mut Store,
 ) -> Result<(), HandlePublishError> {
     // 3.3.4 PUBLISH Actions
     let topic_name = match publish.topic_alias {
@@ -815,13 +880,16 @@ async fn handle_publish<T: MqttSinkStream>(
         None => &publish.topic_name,
     };
 
+    let retain = publish.retain;
+    let payload_is_empty = publish.payload.is_empty();
+
     match &publish.qos {
         QoS::AtMostOnce => {
             broadcast_publish(
                 broadcast_tx,
                 Publish {
                     topic_name: topic_name.to_string(),
-                    ..publish
+                    ..publish.clone()
                 },
             );
         }
@@ -836,7 +904,7 @@ async fn handle_publish<T: MqttSinkStream>(
                 broadcast_tx,
                 Publish {
                     topic_name: topic_name.to_string(),
-                    ..publish
+                    ..publish.clone()
                 },
             );
 
@@ -850,6 +918,24 @@ async fn handle_publish<T: MqttSinkStream>(
                 .await?;
         }
         QoS::ExactlyOnce => todo!("not impl exactly once in incoming PUBLISH handling."),
+    }
+
+    match (retain, payload_is_empty) {
+        (true, true) => {
+            cluster_store.remove_retained(topic_name).await?;
+        }
+        (true, false) => {
+            cluster_store
+                .replace_retained(
+                    topic_name,
+                    Publish {
+                        topic_name: topic_name.to_string(),
+                        ..publish
+                    },
+                )
+                .await?;
+        }
+        _ => {}
     }
 
     Ok(())

@@ -53,6 +53,15 @@ fn parse_variable_u32(input: &[u8]) -> MqttParserResult<&[u8], u32> {
 
     let mut shift = 0;
     loop {
+        // https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901011
+        // The maximum number of bytes in the Variable Byte Integer field is four.
+        if shift >= 4 {
+            return Err(nom::Err::Failure(MalformedPacket(
+                "The maximum number of bytes in the Variable Byte Integer field is four."
+                    .to_string(),
+            )));
+        }
+
         let (rest_next, size) = take_first(rest)?;
         rest = rest_next;
 
@@ -813,7 +822,27 @@ mod tests {
         three_lower: (&[0x80u8, 0x80u8, 0x01u8], 16_384u32),
         three_upper: (&[0xffu8, 0xffu8, 0x7fu8], 2_097_151u32),
         four_lower: (&[0x80u8, 0x80u8, 0x80u8, 0x01u8], 2_097_152u32),
-        four_upper: (&[0xffu8, 0xffu8, 0xffu8, 0x07fu8], 268_435_455u32),
+        four_upper: (&[0xffu8, 0xffu8, 0xffu8, 0x7fu8], 268_435_455u32),
+    }
+
+    macro_rules! variable_uint_should_fail_tests {
+        ($($name:ident: $value:expr,)*) => {
+        $(
+            #[test]
+            fn $name() -> Result<(), String> {
+                if let Ok(_) = parse_variable_u32($value) {
+                    Err(format!("should fail."))
+                } else {
+                    Ok(())
+                }
+            }
+        )*
+        }
+    }
+
+    variable_uint_should_fail_tests! {
+        five_lower: &[0x80u8, 0x80u8, 0x80u8, 0x80u8, 0x01u8],
+        five_upper: &[0xffu8, 0xffu8, 0xffu8, 0xffu8, 0x7fu8],
     }
 
     macro_rules! string_tests {

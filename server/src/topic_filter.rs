@@ -1,6 +1,6 @@
 use itertools::Itertools;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TopicFilter {
     segments: Vec<Segment>,
 }
@@ -20,7 +20,7 @@ impl std::fmt::Display for TopicFilterError {
 
 impl std::error::Error for TopicFilterError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Segment {
     Literal(String),
     MultiLevelWildcard,

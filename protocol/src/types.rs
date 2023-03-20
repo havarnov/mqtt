@@ -185,6 +185,15 @@ pub enum Payload {
     String(String),
 }
 
+impl Payload {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Payload::Unspecified(bytes) => bytes.len() == 0,
+            Payload::String(string) => string.is_empty(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Connect {
     /// [3.1.2.1 Protocol Name](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901036)
@@ -618,11 +627,11 @@ pub struct PubAck {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum RetainHandling {
-    // 0 - Send retained messages at the time of the subscribe
+    /// 0 - Send retained messages at the time of the subscribe
     SendRetained,
-    // 1 - Send retained messages at subscribe only if the subscription does not currently exist
+    /// 1 - Send retained messages at subscribe only if the subscription does not currently exist
     SendRetainedForNewSubscription,
-    // 2 - Do not send retained messages at the time of the subscribe
+    /// 2 - Do not send retained messages at the time of the subscribe
     DoNotSendRetained,
 }
 

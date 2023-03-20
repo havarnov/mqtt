@@ -67,9 +67,23 @@ impl Session for MemorySession {
         &mut self,
         topic: String,
         client_subscription: ClientSubscription,
-    ) -> Result<(), SessionError> {
-        self.subscriptions.insert(topic, client_subscription);
-        Ok(())
+    ) -> Result<AddSubscriptionResult, SessionError> {
+        let mut res: AddSubscriptionResult = AddSubscriptionResult::New;
+        self.subscriptions
+            .entry(topic)
+            .and_modify(|old| {
+                old.maximum_qos = client_subscription.maximum_qos;
+                old.retain_as_published = client_subscription.retain_as_published;
+                old.topic_filter = client_subscription.topic_filter.clone();
+                old.subscription_identifier = client_subscription.subscription_identifier;
+                res = AddSubscriptionResult::Replaced;
+            })
+            .or_insert_with(|| {
+                res = AddSubscriptionResult::New;
+                client_subscription
+            });
+
+        Ok(res)
     }
 
     async fn remove_subscription(&mut self, topic: String) -> Result<Option<()>, SessionError> {
@@ -144,7 +158,7 @@ impl SessionProvider for MemorySessionProvider {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientSubscription {
     pub topic_filter: TopicFilter,
     pub subscription_identifier: Option<u32>,
@@ -156,6 +170,11 @@ pub struct ClientSubscription {
 pub trait TransactionalSession: Send + Sync {
     type S: Session;
     async fn begin(&mut self) -> Result<(), Self::S>;
+}
+
+pub enum AddSubscriptionResult {
+    New,
+    Replaced,
 }
 
 #[async_trait]
@@ -170,7 +189,7 @@ pub trait Session: Send + Sync {
         &mut self,
         topic: String,
         client_subscription: ClientSubscription,
-    ) -> Result<(), SessionError>;
+    ) -> Result<AddSubscriptionResult, SessionError>;
     async fn remove_subscription(&mut self, topic: String) -> Result<Option<()>, SessionError>;
     async fn get_subscriptions(&self) -> Result<Vec<&ClientSubscription>, SessionError>;
     async fn add_unsent_atleastonce(
