@@ -1,3 +1,4 @@
+use crate::broker_store::MemoryClusterStore;
 use crate::session::MemorySessionProvider;
 use crate::{handle_connect, ClientIdentifier, HandleConnectError, IncomingConnectionHandler};
 use futures::{SinkExt, StreamExt};
@@ -124,6 +125,7 @@ async fn connect_and_connack() -> Result<(), Box<dyn Error>> {
     let handler = IncomingConnectionHandler {
         clients: dashmap::DashMap::new(),
         session_provider: MemorySessionProvider::new(),
+        cluster_store: MemoryClusterStore::new(),
     };
 
     let (mut client_side, server_side) = create_client();
@@ -154,6 +156,7 @@ async fn multiple_connect_should_close_connection() -> Result<(), Box<dyn Error>
     let handler = IncomingConnectionHandler {
         clients: dashmap::DashMap::new(),
         session_provider: MemorySessionProvider::new(),
+        cluster_store: MemoryClusterStore::new(),
     };
 
     let (mut client_side, server_side) = create_client();

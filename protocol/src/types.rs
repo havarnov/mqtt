@@ -547,6 +547,7 @@ pub struct Publish {
     /// [3.3.2.3.8 Subscription Identifier](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901117)
     ///
     /// (...) representing the identifier of the subscription.
+    /// TODO: could be multiple.
     pub subscription_identifier: Option<u32>,
 
     /// [3.3.2.3.9 Content Type](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901118)

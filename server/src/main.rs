@@ -1,4 +1,5 @@
 mod broker_store;
+mod publish;
 mod session;
 mod topic_filter;
 
@@ -14,22 +15,21 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
-use tokio::sync::broadcast::error::SendError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::{sleep, Instant};
 use tokio_util::codec::Framed;
 use tracing::trace;
 
 use crate::broker_store::{ClusterStore, ClusterStoreError, MemoryClusterStore};
+use crate::publish::{HandlePublishError, PublishHandler};
 use crate::session::{
     AddSubscriptionResult, ClientSubscription, MemorySessionProvider, SessionError, SessionProvider,
 };
 use crate::topic_filter::TopicFilter;
 use mqtt_protocol::codec::{MqttPacketDecoder, MqttPacketDecoderError, MqttPacketEncoderError};
 use mqtt_protocol::{
-    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, PubAck,
-    PubAckReason, Publish, QoS, RetainHandling, SubAck, Subscribe, SubscribeReason, UnsubAck,
-    UnsubscribeReason, Will,
+    ConnAck, Connect, ConnectReason, Disconnect, DisconnectReason, MqttPacket, Publish, QoS,
+    RetainHandling, SubAck, Subscribe, SubscribeReason, UnsubAck, UnsubscribeReason, Will,
 };
 
 // TODO: consts that should be configurable
@@ -102,6 +102,9 @@ async fn process<Session: session::Session, Store: ClusterStore, T: MqttSinkStre
 where
     <T as futures::Sink<MqttPacket>>::Error: std::error::Error,
 {
+    let mut publish_handler =
+        PublishHandler::new(cluster_store.clone(), broadcast_tx.clone(), MAX_TOPIC_ALIAS);
+
     let mut framed: Option<T> = None;
     let mut broadcast_rx = broadcast_tx.subscribe();
 
@@ -220,12 +223,10 @@ where
                     }
                     Some(Ok(MqttPacket::Publish(publish))) => {
                         println!("client published packet: {:?}.", publish);
-                        match handle_publish(
+                        match publish_handler.handle(
                             framed.as_mut().expect("must be some at this point"),
                             &mut topic_alias_map,
-                            publish,
-                            &broadcast_tx,
-                            &mut cluster_store)
+                            publish,)
                         .await {
                             Ok(()) => (),
                             Err(HandlePublishError::TopicAlias(error)) => {
@@ -783,172 +784,4 @@ async fn handle_subscribe<Session: session::Session, T: MqttSinkStream, Store: C
         }))
         .await?;
     Ok(())
-}
-
-#[derive(Debug)]
-enum HandlePublishError {
-    TopicAlias(String),
-    BroadcastSend(SendError<ClientBroadcastMessage>),
-    Framed(MqttPacketEncoderError),
-    ClusterStore(ClusterStoreError),
-}
-
-impl From<SendError<ClientBroadcastMessage>> for HandlePublishError {
-    fn from(error: SendError<ClientBroadcastMessage>) -> Self {
-        HandlePublishError::BroadcastSend(error)
-    }
-}
-
-impl From<MqttPacketEncoderError> for HandlePublishError {
-    fn from(mqtt_packet_encoder_error: MqttPacketEncoderError) -> Self {
-        HandlePublishError::Framed(mqtt_packet_encoder_error)
-    }
-}
-
-impl From<ClusterStoreError> for HandlePublishError {
-    fn from(cluster_store_error: ClusterStoreError) -> Self {
-        HandlePublishError::ClusterStore(cluster_store_error)
-    }
-}
-
-impl std::fmt::Display for HandlePublishError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for HandlePublishError {}
-
-/// Handles incoming PUBLISH packets sent from a client.
-async fn handle_publish<T: MqttSinkStream, Store: ClusterStore>(
-    framed: &mut T,
-    topic_alias_map: &mut HashMap<u16, String>,
-    publish: Publish,
-    broadcast_tx: &broadcast::Sender<ClientBroadcastMessage>,
-    cluster_store: &mut Store,
-) -> Result<(), HandlePublishError> {
-    // 3.3.4 PUBLISH Actions
-    let topic_name = match publish.topic_alias {
-        Some(topic_alias) if topic_alias == 0 || topic_alias > MAX_TOPIC_ALIAS => {
-            framed
-                .send(MqttPacket::Disconnect(Disconnect {
-                    disconnect_reason: DisconnectReason::TopicAliasInvalid,
-                    server_reference: None,
-                    session_expiry_interval: None,
-                    user_properties: None,
-                    reason_string: None,
-                }))
-                .await?;
-            return Err(HandlePublishError::TopicAlias(
-                "'topic_alias' is or > MAX_TOPIC_ALIAS.".to_string(),
-            ));
-        }
-        Some(topic_alias) if publish.topic_name.is_empty() => {
-            if let Some(topic_name) = topic_alias_map.get(&topic_alias) {
-                topic_name
-            } else {
-                framed
-                    .send(MqttPacket::Disconnect(Disconnect {
-                        disconnect_reason: DisconnectReason::ProtocolError,
-                        server_reference: None,
-                        session_expiry_interval: None,
-                        user_properties: None,
-                        reason_string: None,
-                    }))
-                    .await?;
-                return Err(HandlePublishError::TopicAlias(format!("Couldn't find the topic name from provided topic alias = {} and no topic name was provided.", topic_alias)));
-            }
-        }
-        Some(topic_alias) => {
-            topic_alias_map.insert(topic_alias, publish.topic_name.clone());
-            &publish.topic_name
-        }
-        None if publish.topic_name.is_empty() => {
-            framed
-                .send(MqttPacket::Disconnect(Disconnect {
-                    disconnect_reason: DisconnectReason::ProtocolError,
-                    server_reference: None,
-                    session_expiry_interval: None,
-                    user_properties: None,
-                    reason_string: None,
-                }))
-                .await?;
-            return Err(HandlePublishError::TopicAlias(
-                "Neither topic alias nor topic name was provided.".to_string(),
-            ));
-        }
-        None => &publish.topic_name,
-    };
-
-    let retain = publish.retain;
-    let payload_is_empty = publish.payload.is_empty();
-
-    match &publish.qos {
-        QoS::AtMostOnce => {
-            broadcast_publish(
-                broadcast_tx,
-                Publish {
-                    topic_name: topic_name.to_string(),
-                    ..publish.clone()
-                },
-            );
-        }
-        QoS::AtLeastOnce => {
-            let packet_identifier = if let Some(packet_identifier) = publish.packet_identifier {
-                packet_identifier
-            } else {
-                todo!("error")
-            };
-
-            broadcast_publish(
-                broadcast_tx,
-                Publish {
-                    topic_name: topic_name.to_string(),
-                    ..publish.clone()
-                },
-            );
-
-            framed
-                .send(MqttPacket::PubAck(PubAck {
-                    packet_identifier,
-                    reason: PubAckReason::Success,
-                    reason_string: None,
-                    user_properties: None,
-                }))
-                .await?;
-        }
-        QoS::ExactlyOnce => todo!("not impl exactly once in incoming PUBLISH handling."),
-    }
-
-    match (retain, payload_is_empty) {
-        (true, true) => {
-            cluster_store.remove_retained(topic_name).await?;
-        }
-        (true, false) => {
-            cluster_store
-                .replace_retained(
-                    topic_name,
-                    Publish {
-                        topic_name: topic_name.to_string(),
-                        ..publish
-                    },
-                )
-                .await?;
-        }
-        _ => {}
-    }
-
-    Ok(())
-}
-
-fn broadcast_publish(broadcast_tx: &broadcast::Sender<ClientBroadcastMessage>, publish: Publish) {
-    // TODO: store to some session and let another task handle the broadcast publish,
-    // this will mean that a PubAck sent from the server actually means that the message will be processed
-    match broadcast_tx.send(ClientBroadcastMessage::Publish {
-        received_instant: Instant::now(),
-        publish: Arc::new(publish),
-    }) {
-        Ok(estimated_receivers) => tracing::info!("An incoming PUBLISH message was sent to ~{} potential receivers.", estimated_receivers),
-        Err(_) => unreachable!("Since the caller of this function also holds a receiving end of this channel this can never fail."),
-    };
 }
